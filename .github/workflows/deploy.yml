@@ -1,0 +1,40 @@
+name: 🚀 Déploiement automatique AMM
+
+on:
+  push:
+    branches: [ main ]  # Se déclenche sur un push vers 'main'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Récupérer le code du dépôt
+      uses: actions/checkout@v4
+
+    - name: 🔗 Se connecter au VPS et déployer
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.VPS_HOST }}
+        username: ${{ secrets.VPS_USER }}
+        key: ${{ secrets.VPS_SSH_KEY }}
+        script: |
+          # Aller dans le dossier du projet sur le VPS
+          cd /var/www/vhosts/belej-erp.com/amm.belej-erp.com/
+          
+          # Mettre à jour le code
+          echo "📥 Mise à jour du code depuis GitHub..."
+          git pull origin main
+          
+          # (Optionnel) Exécuter des commandes post-déploiement
+          # php migrate.php
+          # composer install --no-dev
+          # npm install --production
+          
+          # Corriger les permissions
+          echo "🔧 Correction des permissions..."
+          sudo chown -R www-data:www-data .
+          sudo find . -type d -exec chmod 755 {} \;
+          sudo find . -type f -exec chmod 644 {} \;
+          
+          echo "✅ Déploiement de AMM terminé avec succès !"
