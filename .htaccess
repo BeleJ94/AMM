@@ -2,7 +2,6 @@ Options -Indexes
 
 # Réécriture d'URL pour le routeur principal
 RewriteEngine On
-RewriteBase /AMM/
 
 # Bloquer l'accès direct aux dossiers sensibles
 RewriteRule ^config/(.*)$ - [F,L]

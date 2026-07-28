@@ -13,7 +13,40 @@ define('DB_CHARSET', 'utf8mb4');
 
 // Paramètres de l'application
 define('APP_NAME', 'AMM-ERP');
-define('APP_URL', 'http://localhost/AMM');
+
+/*
+ * URL publique de l'application.
+ *
+ * Priorité :
+ * 1. variable serveur APP_URL (recommandée sur le VPS) ;
+ * 2. détection automatique du domaine, du protocole et du sous-répertoire ;
+ * 3. valeur locale de secours pour les scripts exécutés en ligne de commande.
+ *
+ * Exemples VPS :
+ *   APP_URL=https://erp.amm.cd
+ *   APP_URL=https://gestion.amm.cd/AMM
+ */
+$configuredAppUrl = trim((string)(getenv('APP_URL') ?: ($_SERVER['APP_URL'] ?? '')));
+if ($configuredAppUrl !== '' && preg_match('~^https?://[a-z0-9.\-:\[\]]+(?:/[^\s?#]*)?$~i', $configuredAppUrl)) {
+    $resolvedAppUrl = rtrim($configuredAppUrl, '/');
+} elseif (PHP_SAPI !== 'cli' && !empty($_SERVER['HTTP_HOST'])) {
+    $forwardedProto = strtolower(trim(explode(',', (string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''))[0]));
+    $isHttps = (!empty($_SERVER['HTTPS']) && strtolower((string)$_SERVER['HTTPS']) !== 'off')
+        || (string)($_SERVER['SERVER_PORT'] ?? '') === '443'
+        || $forwardedProto === 'https';
+    $scheme = $isHttps ? 'https' : 'http';
+
+    // Neutraliser les caractères qui ne peuvent pas appartenir à un hôte HTTP.
+    $host = preg_replace('/[^a-z0-9.\-:\[\]]/i', '', (string)$_SERVER['HTTP_HOST']);
+    $scriptName = str_replace('\\', '/', (string)($_SERVER['SCRIPT_NAME'] ?? '/index.php'));
+    $basePath = rtrim(str_replace('\\', '/', dirname($scriptName)), '/.');
+    $basePath = $basePath === '' ? '' : '/' . ltrim($basePath, '/');
+    $resolvedAppUrl = $scheme . '://' . $host . $basePath;
+} else {
+    $resolvedAppUrl = 'http://localhost/AMM';
+}
+
+define('APP_URL', $resolvedAppUrl);
 define('APP_VERSION', '1.0.0');
 define('APP_TIMEZONE', 'Africa/Lubumbashi');
 
