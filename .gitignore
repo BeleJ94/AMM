@@ -1,0 +1,16 @@
+node_modules/
+
+# macOS / OS files
+.DS_Store
+
+# Runtime logs and local backups
+logs/*
+!logs/.htaccess
+assets/backups/
+
+# User-uploaded/local files
+assets/uploads/*
+!assets/uploads/.htaccess
+
+# Local database dumps with seed credentials/data
+*.sql
