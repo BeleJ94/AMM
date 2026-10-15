@@ -51,6 +51,26 @@ function libelleRole(string $role): string {
     return rolesApplication()[$role] ?? ucfirst(str_replace('_', ' ', $role));
 }
 
+/** Accès au portefeuille complet des demandes ; les autres profils restent dans leur périmètre. */
+function accesGlobalDemandesFonds(): bool {
+    if (in_array($_SESSION['user_role'] ?? '', ['admin','direction','tresorier','comptable_senior','directeur_financier','directeur_general','auditeur_interne'], true)) {
+        return true;
+    }
+    $service = strtolower((string)($_SESSION['user_service'] ?? ''));
+    $service = strtr($service, ['é'=>'e','è'=>'e','ê'=>'e','ô'=>'o']);
+    foreach (['finance','tresorerie','comptable','comptabilite'] as $mot) {
+        if (strpos($service, $mot) !== false) return true;
+    }
+    return false;
+}
+
+function perimetreDemandesFonds(): array {
+    if (accesGlobalDemandesFonds()) return [];
+    $service = trim((string)($_SESSION['user_service'] ?? ''));
+    if (($_SESSION['user_role'] ?? '') === 'chef_service' && $service !== '') return ['department' => $service];
+    return ['created_by' => (int)($_SESSION['user_id'] ?? 0)];
+}
+
 /**
  * Génère un token CSRF et le stocke en session.
  * @return string Le token généré

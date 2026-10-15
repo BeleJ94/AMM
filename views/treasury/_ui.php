@@ -4,6 +4,10 @@ if (!function_exists('treasuryUiLabel')) {
         $labels = [
             'brouillon' => 'Brouillon',
             'soumise' => 'Soumise',
+            'a_controler' => 'À contrôler · Trésorerie',
+            'en_suspens' => 'En suspens',
+            'repris' => 'Repris',
+            'tresorier' => 'Trésorier',
             'validee_comptable' => 'Validée comptable',
             'validee_direction' => 'Validée direction',
             'rejetee' => 'Rejetée',
@@ -54,6 +58,8 @@ if (!function_exists('treasuryUiStatusBadge')) {
         $classes = [
             'brouillon' => 'secondary',
             'soumise' => 'warning text-dark',
+            'a_controler' => 'info text-dark',
+            'en_suspens' => 'warning text-dark',
             'validee_comptable' => 'info text-dark',
             'validee_direction' => 'primary',
             'ordre_emis' => 'dark',

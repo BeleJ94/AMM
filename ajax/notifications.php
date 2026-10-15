@@ -15,6 +15,13 @@ if (empty($_SESSION['user_id'])) {
 }
 
 $pdo = getDB();
+// Les rappels arrivent aussi lorsque l'utilisateur reste sur un autre module.
+require_once __DIR__ . '/../models/Treasury.php';
+try {
+    (new Treasury())->envoyerRappelsDemandes();
+} catch (Throwable $e) {
+    error_log('Rappels demandes de fonds : ' . $e->getMessage());
+}
 $stmt = $pdo->prepare(
     "SELECT id, type_notif, message, lien, est_lu, DATE_FORMAT(created_at, '%d/%m/%Y %H:%i') AS created_at
      FROM notifications

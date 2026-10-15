@@ -48,6 +48,17 @@ class TreasuryController {
         $demandesDirection = $this->treasuryModel->listerDemandes(['status' => 'validee_comptable'], 20, 0);
         $demandesPretes = $this->treasuryModel->listerDemandes(['status' => 'validee_direction'], 15, 0);
 
+        if ($this->peutControlerDemandes()) {
+            foreach ($this->treasuryModel->listerDemandes(['status'=>'a_controler'], 20, 0) as $demande) {
+                $actionsPrioritaires[] = $this->actionDashboardDemande($demande, 'Contrôle avant transmission au comptable', 'Trésorier A', 'Contrôler', 'info');
+            }
+        }
+        foreach ($this->treasuryModel->listerDemandes(['status'=>'en_suspens'], 20, 0) as $demande) {
+            if ($this->peutValiderNiveau((string)$demande['suspended_level'])) {
+                $actionsPrioritaires[] = $this->actionDashboardDemande($demande, 'En suspens · rappel le ' . formatDate($demande['reminder_date']), 'Validateur du dossier', 'Reprendre', 'warning');
+            }
+        }
+
         if ($peutComptable) {
             foreach ($demandesSoumises as $demande) {
                 $actionsPrioritaires[] = $this->actionDashboardDemande($demande, 'Contrôle comptable requis', 'Comptable senior', 'Examiner', 'warning');
@@ -381,7 +392,11 @@ class TreasuryController {
     }
 
     public function demandes(): void {
-        $this->verifierAccesTresorerie();
+        verifierSession();
+        $accesDepartement = !accesGlobalDemandesFonds();
+        $peutCreerDemande = ($_SESSION['user_role'] ?? '') !== 'auditeur_interne';
+        $perimetre = perimetreDemandesFonds();
+        $this->treasuryModel->envoyerRappelsDemandes();
 
         $page = max(1, (int)($_GET['page'] ?? 1));
         $filtres = [
@@ -394,18 +409,21 @@ class TreasuryController {
 
         // DataTables assure la pagination, le tri et la recherche côté interface.
         // Une limite de sécurité élevée évite une double pagination incohérente.
+        $filtres = array_merge($filtres, $perimetre);
         $demandes = $this->treasuryModel->listerDemandes($filtres, 5000, 0);
         $requestStats = [
-            'total' => $this->treasuryModel->compterDemandes([]),
-            'soumise' => $this->treasuryModel->compterDemandes(['status' => 'soumise']),
-            'validee_comptable' => $this->treasuryModel->compterDemandes(['status' => 'validee_comptable']),
-            'validee_direction' => $this->treasuryModel->compterDemandes(['status' => 'validee_direction']),
-            'haute' => $this->treasuryModel->compterDemandes(['urgency' => 'haute']),
+            'total' => $this->treasuryModel->compterDemandes($perimetre),
+            'a_controler' => $this->treasuryModel->compterDemandes(array_merge(['status' => 'a_controler'], $perimetre)),
+            'en_suspens' => $this->treasuryModel->compterDemandes(array_merge(['status' => 'en_suspens'], $perimetre)),
+            'soumise' => $this->treasuryModel->compterDemandes(array_merge(['status' => 'soumise'], $perimetre)),
+            'validee_comptable' => $this->treasuryModel->compterDemandes(array_merge(['status' => 'validee_comptable'], $perimetre)),
+            'validee_direction' => $this->treasuryModel->compterDemandes(array_merge(['status' => 'validee_direction'], $perimetre)),
+            'haute' => $this->treasuryModel->compterDemandes(array_merge(['urgency' => 'haute'], $perimetre)),
         ];
         $requestKpiDetails = [];
         foreach (array_keys($requestStats) as $metric) {
             $definition = $this->definitionKpiDemandes($metric);
-            $lignes = $this->treasuryModel->listerDemandes($definition['filters'], 5000, 0);
+            $lignes = $this->treasuryModel->listerDemandes(array_merge($definition['filters'], $perimetre), 5000, 0);
             $requestKpiDetails[$metric] = [
                 'title' => $definition['title'],
                 'subtitle' => $definition['subtitle'],
@@ -431,13 +449,13 @@ class TreasuryController {
             ];
         }
 
-        $this->render('demandes', compact('filtres', 'demandes', 'requestStats', 'requestKpiDetails'));
+        $this->render('demandes', compact('filtres', 'demandes', 'requestStats', 'requestKpiDetails', 'accesDepartement', 'peutCreerDemande'));
     }
 
     public function pdfDemandesKpi(): void {
         $this->verifierAccesTresorerie();
         $metric = $_GET['metric'] ?? 'total';
-        if (!in_array($metric, ['total','soumise','validee_comptable','validee_direction','haute','registre'], true)) {
+        if (!in_array($metric, ['total','a_controler','en_suspens','soumise','validee_comptable','validee_direction','haute','registre'], true)) {
             $metric = 'total';
         }
         $definition = $metric === 'registre' ? $this->definitionRegistreDemandes() : $this->definitionKpiDemandes($metric);
@@ -498,7 +516,7 @@ class TreasuryController {
     public function excelDemandesKpi(): void {
         $this->verifierAccesTresorerie();
         $metric = $_GET['metric'] ?? 'total';
-        if (!in_array($metric, ['total','soumise','validee_comptable','validee_direction','haute','registre'], true)) {
+        if (!in_array($metric, ['total','a_controler','en_suspens','soumise','validee_comptable','validee_direction','haute','registre'], true)) {
             $metric = 'total';
         }
         $definition = $metric === 'registre' ? $this->definitionRegistreDemandes() : $this->definitionKpiDemandes($metric);
@@ -688,126 +706,138 @@ class TreasuryController {
     }
 
     public function ajouterDemande(): void {
-        $this->verifierAccesTresorerie('operation');
-
+        verifierSession();
+        if (($_SESSION['user_role'] ?? '') === 'auditeur_interne') {
+            flashMessage('erreur', 'Le profil auditeur dispose d’un accès en lecture.');
+            redirect('/treasury/demandes');
+        }
         $erreurs = [];
+        $accesDepartement = !accesGlobalDemandesFonds();
         $categories = $this->financeModel->listerCategories('depense');
-        $comptes = $this->financeModel->listerComptes();
-
+        $comptes = $accesDepartement ? [] : $this->financeModel->listerComptes();
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!validerTokenCSRF($_POST['csrf_token'] ?? '')) {
-                $erreurs[] = 'Requête invalide.';
+                $erreurs[] = 'La session du formulaire a expiré. Veuillez réessayer.';
             } else {
-                $justificatif = null;
-                if (!empty($_FILES['justification_file']['name'])) {
-                    $justificatif = traiterUpload($_FILES['justification_file'], 'treasury');
-                    if ($justificatif === false) {
-                        $erreurs[] = 'Justificatif invalide.';
-                    }
-                }
-
+                $department = $accesDepartement ? trim((string)($_SESSION['user_service'] ?? '')) : trim((string)($_POST['department'] ?? ''));
+                $requester = $accesDepartement ? trim((string)($_SESSION['user_nom'] ?? '')) : trim((string)($_POST['requester_name'] ?? $_SESSION['user_nom'] ?? ''));
                 $donnees = [
                     'request_date' => $_POST['request_date'] ?? date('Y-m-d'),
-                    'beneficiary' => trim($_POST['beneficiary'] ?? ''),
-                    'objet' => trim($_POST['objet'] ?? ''),
-                    'description' => trim($_POST['description'] ?? ''),
-                    'amount' => (float)($_POST['amount'] ?? 0),
+                    'department' => $department,
+                    'requester_name' => $requester,
+                    'beneficiary' => trim((string)($_POST['beneficiary'] ?? '')),
+                    'objet' => trim((string)($_POST['objet'] ?? '')),
+                    'description' => trim((string)($_POST['description'] ?? '')),
                     'currency' => $_POST['currency'] ?? 'USD',
                     'exchange_rate' => (float)($_POST['exchange_rate'] ?? 0),
                     'category_id' => (int)($_POST['category_id'] ?? 0),
-                    'preferred_account_id' => (int)($_POST['preferred_account_id'] ?? 0),
+                    'preferred_account_id' => $accesDepartement ? 0 : (int)($_POST['preferred_account_id'] ?? 0),
                     'urgency' => $_POST['urgency'] ?? 'moyenne',
-                    'justification_file' => $justificatif,
-                    'created_by' => (int)($_SESSION['user_id'] ?? 0),
+                    'created_by' => (int)$_SESSION['user_id'],
+                    'amount' => 0,
                 ];
-
+                try {
+                    if (!is_array($_POST['items'] ?? null)) throw new InvalidArgumentException('Ajoutez au moins une ligne de bien ou service.');
+                    $lignes = $this->treasuryModel->normaliserLignesDemande($_POST['items']);
+                    $donnees['items'] = $lignes['items'];
+                    $donnees['amount'] = $lignes['total'];
+                } catch (InvalidArgumentException $e) { $erreurs[] = $e->getMessage(); }
                 $this->validerDonneesDemande($donnees, $erreurs);
-
+                if ($department === '' || mb_strlen($department) > 100) $erreurs[] = 'Un département demandeur valide est obligatoire (100 caractères maximum).';
+                if ($requester === '' || mb_strlen($requester) > 150) $erreurs[] = 'Le nom du demandeur est obligatoire (150 caractères maximum).';
+                if ($donnees['description'] === '') $erreurs[] = 'Expliquez la justification du besoin.';
+                $date = DateTimeImmutable::createFromFormat('!Y-m-d', (string)$donnees['request_date']);
+                if (!$date || $date->format('Y-m-d') !== $donnees['request_date']) $erreurs[] = 'La date de la demande est invalide.';
+                if (!in_array($donnees['urgency'], ['basse','moyenne','haute'], true)) $erreurs[] = 'Priorité invalide.';
+                if (empty($erreurs) && !empty($_FILES['justification_file']['name'])) {
+                    $preuve = traiterUpload($_FILES['justification_file'], 'treasury');
+                    if ($preuve === false) $erreurs[] = 'Le justificatif est invalide ou dépasse la taille autorisée.';
+                    else $donnees['justification_file'] = $preuve;
+                }
                 if (empty($erreurs)) {
-                    $id = $this->treasuryModel->creerDemandeFonds($donnees);
-                    logAudit('Creation demande de fonds #' . $id, 'treasury_fund_requests', $id);
-
-                    if (!empty($_POST['soumettre'])) {
-                        $this->treasuryModel->soumettreDemande($id, (int)($_SESSION['user_id'] ?? 0));
-                        logAudit('Soumission demande de fonds #' . $id, 'treasury_fund_requests', $id);
-                        $demandeSoumise = $this->treasuryModel->trouverDemandeParId($id);
-                        if ($demandeSoumise) {
-                            $this->notifierValidateursDemande($demandeSoumise, 'comptable');
+                    try {
+                        $id = $this->treasuryModel->creerDemandeFonds($donnees);
+                        logAudit('Création demande de fonds #' . $id, 'treasury_fund_requests', $id);
+                        if (!empty($_POST['soumettre'])) {
+                            if (!$this->treasuryModel->soumettreDemande($id, (int)$_SESSION['user_id'])) throw new RuntimeException('La demande a été enregistrée mais sa transmission a échoué. Retrouvez-la dans vos brouillons.');
+                            $this->notifierTresoriersDemande($id);
+                            logAudit('Transmission au contrôle trésorerie #' . $id, 'treasury_fund_requests', $id);
                         }
-                        $_SESSION['demande_swal'] = [
-                            'icon' => 'success',
-                            'title' => 'Demande créée et soumise',
-                            'text' => 'La demande a été transmise au circuit de validation.',
-                        ];
-                    } else {
-                        $_SESSION['demande_swal'] = [
-                            'icon' => 'success',
-                            'title' => 'Brouillon enregistré',
-                            'text' => 'La demande de fonds a été enregistrée avec succès.',
-                        ];
+                        flashMessage('succes', !empty($_POST['soumettre']) ? 'Demande transmise au trésorier pour contrôle.' : 'Brouillon enregistré. Vous pouvez le transmettre au trésorier depuis sa fiche.');
+                        redirect('/treasury/demande-voir/' . $id);
+                    } catch (Throwable $e) {
+                        error_log('Création demande : ' . $e->getMessage());
+                        $erreurs[] = 'L’enregistrement n’a pas abouti. Vérifiez vos demandes avant de réessayer.';
                     }
-
-                    redirect('/treasury/demande-voir/' . $id);
                 }
             }
         }
-
-        $this->render('demande_ajouter', compact('erreurs', 'categories', 'comptes'));
+        $this->render('demande_ajouter', compact('erreurs', 'categories', 'comptes', 'accesDepartement'));
     }
-
     public function voirDemande(?string $id): void {
-        $this->verifierAccesTresorerie();
-        if (empty($id)) {
-            redirect('/treasury/demandes');
-        }
-
-        $demande = $this->treasuryModel->trouverDemandeParId((int)$id);
-        if (!$demande) {
-            flashMessage('erreur', 'Demande de fonds introuvable.');
-            redirect('/treasury/demandes');
-        }
-
+        verifierSession();
+        if (empty($id)) redirect('/treasury/demandes');
+        $demande = $this->demandeAccessible((int)$id);
+        $peutSoumettre = $demande['status'] === 'brouillon' && (int)$demande['created_by'] === (int)$_SESSION['user_id'] && ($_SESSION['user_role'] ?? '') !== 'auditeur_interne';
+        $peutControlerDemande = $demande['status'] === 'a_controler' && $this->peutControlerDemandes();
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!validerTokenCSRF($_POST['csrf_token'] ?? '')) {
-                flashMessage('erreur', 'Requête invalide.');
+                flashMessage('erreur', 'La session du formulaire a expiré.');
                 redirect('/treasury/demande-voir/' . (int)$id);
             }
-
-            if (($_POST['action'] ?? '') === 'soumettre') {
-                $this->verifierAccesTresorerie('operation');
-                $ok = $this->treasuryModel->soumettreDemande((int)$id, (int)($_SESSION['user_id'] ?? 0));
-                logAudit('Soumission demande de fonds #' . (int)$id, 'treasury_fund_requests', (int)$id);
+            $action = $_POST['action'] ?? '';
+            $ok = false;
+            if ($action === 'soumettre' && $peutSoumettre) {
+                $ok = $this->treasuryModel->soumettreDemande((int)$id, (int)$_SESSION['user_id']);
+                if ($ok) $this->notifierTresoriersDemande((int)$id);
+            } elseif ($action === 'controler' && $peutControlerDemande) {
+                $commentaire = trim((string)($_POST['commentaire'] ?? ''));
+                $ok = $this->treasuryModel->controlerDemande((int)$id, (int)$_SESSION['user_id'], $commentaire);
                 if ($ok) {
-                    $demandeSoumise = $this->treasuryModel->trouverDemandeParId((int)$id);
-                    if ($demandeSoumise) {
-                        $this->notifierValidateursDemande($demandeSoumise, 'comptable');
-                    }
+                    $this->notifierValidateursDemande($this->treasuryModel->trouverDemandeParId((int)$id), 'comptable');
+                    $this->notifierCreateurDemande($demande, 'Votre demande ' . $demande['request_number'] . ' a été contrôlée et transmise au comptable senior.');
                 }
-                $_SESSION['demande_swal'] = [
-                    'icon' => $ok ? 'success' : 'error',
-                    'title' => $ok ? 'Demande transmise' : 'Soumission impossible',
-                    'text' => $ok
-                        ? 'La demande est maintenant dans le circuit de validation comptable.'
-                        : 'La demande n’a pas pu être soumise. Vérifiez son statut puis réessayez.',
-                ];
-                flashMessage($ok ? 'succes' : 'erreur', $ok ? 'Demande soumise.' : 'Impossible de soumettre cette demande.');
-                redirect('/treasury/demande-voir/' . (int)$id);
             }
+            if ($ok) logAudit('Demande de fonds : ' . $action, 'treasury_fund_requests', (int)$id);
+            flashMessage($ok ? 'succes' : 'erreur', $ok ? ($action === 'controler' ? 'Contrôle enregistré. La demande est transmise au comptable senior.' : 'Demande transmise au trésorier pour contrôle.') : 'Cette action n’est pas disponible pour votre profil ou pour l’état actuel de la demande.');
+            redirect('/treasury/demande-voir/' . (int)$id);
         }
-
         $validations = $this->treasuryModel->validationsDemande((int)$id);
+        $lignesDemande = $this->treasuryModel->itemsDemande((int)$id);
         $ordre = $this->treasuryModel->trouverOrdreParDemande((int)$id);
-        $niveauxValidationAutorises = [
-            'comptable' => $this->peutValiderNiveau('comptable'),
-            'direction_financiere' => $this->peutValiderNiveau('direction_financiere'),
-            'direction_generale' => $this->peutValiderNiveau('direction_generale'),
-        ];
-        $peutAnnulerDemande = $this->peutAnnulerTresorerie();
-        $peutEmettreOrdre = $this->peutEmettreOrdre();
-
-        $this->render('demande_voir', compact('demande', 'validations', 'ordre', 'niveauxValidationAutorises', 'peutAnnulerDemande', 'peutEmettreOrdre'));
+        $niveauxValidationAutorises = [];
+        foreach (['comptable','direction_financiere','direction_generale'] as $niveau) {
+            $statut = $demande['status'] === 'en_suspens' ? $demande['previous_status'] : $demande['status'];
+            $etape = $niveau === 'comptable' ? $statut === 'soumise' : $statut === 'validee_comptable';
+            $dejaValide = false;
+            foreach ($validations as $validation) if ($validation['approval_level'] === $niveau && $validation['decision'] === 'valide') $dejaValide = true;
+            $niveauxValidationAutorises[$niveau] = $etape && !$dejaValide && $this->peutValiderNiveau($niveau) && $this->respecteSeparationTachesDemande($demande)
+                && ($demande['status'] !== 'en_suspens' || $demande['suspended_level'] === $niveau);
+        }
+        $peutAnnulerDemande = accesGlobalDemandesFonds() && $this->peutAnnulerTresorerie();
+        $peutEmettreOrdre = accesGlobalDemandesFonds() && $this->peutEmettreOrdre() && $this->respecteSeparationTachesDemande($demande);
+        $peutCreerDemande = ($_SESSION['user_role'] ?? '') !== 'auditeur_interne';
+        $accesDepartement = !accesGlobalDemandesFonds();
+        $this->render('demande_voir', compact('demande','validations','lignesDemande','ordre','niveauxValidationAutorises','peutAnnulerDemande','peutEmettreOrdre','peutSoumettre','peutControlerDemande','peutCreerDemande','accesDepartement'));
     }
 
+    public function pdfDemande(?string $id): void {
+        verifierSession();
+        $demande = $this->demandeAccessible((int)$id);
+        $lignesDemande = $this->treasuryModel->itemsDemande((int)$id);
+        $validations = $this->treasuryModel->validationsDemande((int)$id);
+        ob_start();
+        require __DIR__ . '/../views/treasury/demande_pdf.php';
+        $html = ob_get_clean();
+        $options = new Dompdf\Options();
+        $options->set('isRemoteEnabled', false);
+        $pdf = new Dompdf\Dompdf($options);
+        $pdf->loadHtml($html, 'UTF-8');
+        $pdf->setPaper('A4', 'portrait');
+        $pdf->render();
+        $pdf->stream('demande-fonds-' . (int)$id . '.pdf', ['Attachment' => ($_GET['download'] ?? '') === '1']);
+        exit;
+    }
     public function ordres(): void {
         $this->verifierAccesTresorerie();
 
@@ -1005,78 +1035,46 @@ class TreasuryController {
 
     public function validerDemande(?string $id): void {
         $this->verifierAccesTresorerie();
-        if (empty($id) || $_SERVER['REQUEST_METHOD'] !== 'POST') {
-            redirect('/treasury/demandes');
-        }
+        if (empty($id) || $_SERVER['REQUEST_METHOD'] !== 'POST') redirect('/treasury/demandes');
         if (!validerTokenCSRF($_POST['csrf_token'] ?? '')) {
-            flashMessage('erreur', 'Requête invalide.');
+            flashMessage('erreur', 'La session du formulaire a expiré.');
             redirect('/treasury/demande-voir/' . (int)$id);
         }
-
-        $demande = $this->treasuryModel->trouverDemandeParId((int)$id);
-        if (!$demande) {
-            flashMessage('erreur', 'Demande de fonds introuvable.');
-            redirect('/treasury/demandes');
-        }
-
-        $niveau = $_POST['approval_level'] ?? $this->niveauValidationParDefaut($demande);
-        if (!$this->peutValiderNiveau($niveau)) {
-            flashMessage('erreur', 'Vous n’avez pas les droits pour ce niveau de validation.');
+        $demande = $this->demandeAccessible((int)$id);
+        $niveau = (string)($_POST['approval_level'] ?? $this->niveauValidationParDefaut($demande));
+        if (!$this->peutValiderNiveau($niveau) || !$this->respecteSeparationTachesDemande($demande)) {
+            flashMessage('erreur', 'Cette décision est réservée au validateur habilité. Le créateur et le trésorier soumetteur ne peuvent pas valider leur propre demande.');
             redirect('/treasury/demande-voir/' . (int)$id);
         }
-        if (!$this->respecteSeparationTachesDemande($demande)) {
-            flashMessage('erreur', 'Separation des taches: le createur/soumetteur ne peut pas valider ou rejeter sa propre demande.');
-            redirect('/treasury/demande-voir/' . (int)$id);
-        }
-
-        $decision = $_POST['decision'] ?? 'valide';
-        $commentaire = trim($_POST['commentaire'] ?? '');
-
-        if ($decision === 'rejete') {
-            if ($commentaire === '') {
-                flashMessage('erreur', 'Le motif de rejet est obligatoire.');
-                redirect('/treasury/demande-voir/' . (int)$id);
+        $decision = (string)($_POST['decision'] ?? '');
+        $commentaire = trim((string)($_POST['commentaire'] ?? ''));
+        $approvedRaw = trim((string)($_POST['approved_amount'] ?? ''));
+        $approvedAmount = $approvedRaw === '' ? null : (is_numeric($approvedRaw) ? (float)$approvedRaw : NAN);
+        $reminderDate = trim((string)($_POST['reminder_date'] ?? '')) ?: null;
+        $ok = false;
+        try {
+            if ($decision === 'reprendre') {
+                $ok = $this->treasuryModel->reprendreDemande((int)$id, $niveau, (int)$_SESSION['user_id'], $commentaire);
+            } elseif (in_array($decision, ['annule','en_suspens','valide'], true)) {
+                $ok = $this->treasuryModel->deciderDemande((int)$id, $niveau, (int)$_SESSION['user_id'], $decision, $commentaire, $approvedAmount, $reminderDate);
             }
-            $ok = $this->treasuryModel->rejeterDemande((int)$id, $niveau, (int)($_SESSION['user_id'] ?? 0), $commentaire);
-            if ($ok) {
-                logAudit('Rejet demande de fonds #' . (int)$id . ' niveau ' . $niveau, 'treasury_fund_requests', (int)$id, $commentaire);
-                $this->notifierCreateurDemande($demande, 'Votre demande de fonds ' . $demande['request_number'] . ' a ete rejetee.');
-            }
-            $_SESSION['demande_swal'] = [
-                'icon' => $ok ? 'success' : 'error',
-                'title' => $ok ? 'Rejet enregistré' : 'Rejet impossible',
-                'text' => $ok
-                    ? 'La décision et son motif ont été ajoutés au journal de validation.'
-                    : 'La décision n’a pas pu être enregistrée.',
-            ];
-            flashMessage($ok ? 'succes' : 'erreur', $ok ? 'Demande rejetee.' : 'Impossible de rejeter cette demande.');
+        } catch (InvalidArgumentException $e) {
+            flashMessage('erreur', $e->getMessage());
             redirect('/treasury/demande-voir/' . (int)$id);
         }
-
-        $ok = $this->treasuryModel->validerDemande((int)$id, $niveau, (int)($_SESSION['user_id'] ?? 0), $commentaire);
         if ($ok) {
-            logAudit('Validation demande de fonds #' . (int)$id . ' niveau ' . $niveau, 'treasury_fund_requests', (int)$id);
-            $demandeMaj = $this->treasuryModel->trouverDemandeParId((int)$id);
-            if ($demandeMaj) {
-                if ($niveau === 'comptable' && $demandeMaj['status'] === 'validee_comptable') {
-                    $this->notifierValidateursDemande($demandeMaj, 'direction_financiere');
-                    $this->notifierValidateursDemande($demandeMaj, 'direction_generale');
-                } elseif ($demandeMaj['status'] === 'validee_direction') {
-                    $this->notifierCreateurDemande($demandeMaj, 'Votre demande de fonds ' . $demandeMaj['request_number'] . ' est validee.');
-                }
+            logAudit('Décision demande : ' . $decision . ' · ' . $niveau, 'treasury_fund_requests', (int)$id, json_encode(['commentaire'=>$commentaire,'montant_autorise'=>$approvedAmount,'rappel'=>$reminderDate], JSON_UNESCAPED_UNICODE));
+            $maj = $this->treasuryModel->trouverDemandeParId((int)$id);
+            if ($maj['status'] === 'validee_comptable') {
+                $this->notifierValidateursDemande($maj, 'direction_financiere');
+                $this->notifierValidateursDemande($maj, 'direction_generale');
             }
+            $this->notifierCreateurDemande($maj, 'Demande ' . $maj['request_number'] . ' : ' . $this->libelleTresorerie($maj['status']) . '.');
         }
-        $_SESSION['demande_swal'] = [
-            'icon' => $ok ? 'success' : 'error',
-            'title' => $ok ? 'Approbation enregistrée' : 'Approbation impossible',
-            'text' => $ok
-                ? 'La demande poursuit maintenant son circuit d’approbation.'
-                : 'La décision n’a pas pu être enregistrée.',
-        ];
-        flashMessage($ok ? 'succes' : 'erreur', $ok ? 'Demande validee.' : 'Impossible de valider cette demande.');
+        $messages = ['annule'=>'Demande annulée. Le motif est conservé.', 'en_suspens'=>'Demande mise en suspens. Le rappel et le motif sont enregistrés.', 'valide'=>'Validation enregistrée. Le montant autorisé est affiché sur la fiche.', 'reprendre'=>'Demande reprise au même niveau de validation.'];
+        flashMessage($ok ? 'succes' : 'erreur', $ok ? $messages[$decision] : 'La décision n’a pas été enregistrée. Vérifiez le niveau, le montant autorisé, le motif et la date de rappel.');
         redirect('/treasury/demande-voir/' . (int)$id);
     }
-
     public function annulerDemande(?string $id): void {
         $this->verifierAccesTresorerie('operation');
         if (empty($id) || $_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -1126,16 +1124,16 @@ class TreasuryController {
         }
 
         $ordre = $this->treasuryModel->trouverOrdreParDemande($requestId);
-        $comptes = $this->financeModel->listerComptes();
-        $tauxChangeCdfUsd = (float)$this->treasuryModel->getSetting('default_exchange_rate_cdf_usd', '2000');
+        $comptes = array_values(array_filter($this->financeModel->listerComptes(), static function ($compte) use ($demande) {
+            return $compte['devise'] === $demande['currency'];
+        }));
         foreach ($comptes as &$compte) {
-            $compte['montant_requis'] = $this->montantRequisDansDeviseCompte(
-                (float)($demande['amount_usd'] ?? 0),
-                (string)$compte['devise'],
-                $tauxChangeCdfUsd
-            );
+            $controle = $this->controleComptePaiement((int)$compte['id'], (int)($ordre['id'] ?? 0));
+            $compte['solde_disponible'] -= $controle['engagements'];
+            $compte['anomalie_devise'] = $controle['anomalie'];
+            $compte['montant_requis'] = (float)($demande['approved_amount'] ?? $demande['amount']);
             $compte['solde_apres'] = (float)$compte['solde_disponible'] - (float)$compte['montant_requis'];
-            $compte['couverture_suffisante'] = (float)$compte['solde_apres'] >= -0.00001;
+            $compte['couverture_suffisante'] = !$controle['anomalie'] && (float)$compte['solde_apres'] >= -0.00001;
         }
         unset($compte);
         $erreurs = [];
@@ -1188,11 +1186,15 @@ class TreasuryController {
                     }
                 }
                 if ($compteSelectionne !== null && empty($compteSelectionne['couverture_suffisante'])) {
+                    if (!empty($compteSelectionne['anomalie_devise'])) {
+                        $erreurs[] = 'Ce compte contient une écriture dans une autre devise. Faites vérifier son solde avant d’émettre un ordre.';
+                    } else {
                     $erreurs[] = 'Solde insuffisant sur le compte « ' . $compteSelectionne['nom'] . ' » : '
                         . formatMontant((float)$compteSelectionne['solde_disponible'], $compteSelectionne['devise'])
                         . ' disponible pour '
                         . formatMontant((float)$compteSelectionne['montant_requis'], $compteSelectionne['devise'])
                         . ' requis.';
+                    }
                 }
 
                 if (empty($erreurs)) {
@@ -1250,13 +1252,17 @@ class TreasuryController {
             redirect($retour);
         }
         $comptePaiement = $this->financeModel->trouverCompteParId((int)$ordre['account_id']);
-        $tauxChangeCdfUsd = (float)$this->treasuryModel->getSetting('default_exchange_rate_cdf_usd', '2000');
-        $montantRequis = $this->montantRequisDansDeviseCompte(
-            (float)($ordre['amount_usd'] ?? 0),
-            (string)($comptePaiement['devise'] ?? $ordre['currency']),
-            $tauxChangeCdfUsd
-        );
-        $soldeDisponible = $this->financeModel->soldeCompteDisponible((int)$ordre['account_id']);
+        $montantRequis = (float)$ordre['amount'];
+        if (!$comptePaiement || $comptePaiement['devise'] !== $ordre['currency']) {
+            flashMessage('erreur', 'Le compte de paiement doit utiliser la même devise que l’ordre. Faites corriger l’affectation avant le décaissement.');
+            redirect($retour);
+        }
+        $controleCompte = $this->controleComptePaiement((int)$ordre['account_id'], (int)$ordre['id']);
+        if ($controleCompte['anomalie']) {
+            flashMessage('erreur', 'Le compte contient une écriture dans une autre devise. Faites vérifier son solde avant le décaissement.');
+            redirect($retour);
+        }
+        $soldeDisponible = $this->financeModel->soldeCompteDisponible((int)$ordre['account_id']) - $controleCompte['engagements'];
         if (!$comptePaiement || $soldeDisponible + 0.00001 < $montantRequis) {
             $_SESSION['ordre_swal'] = [
                 'icon' => 'error',
@@ -1326,7 +1332,7 @@ class TreasuryController {
             exit('Paiement introuvable.');
         }
         $ordre = $this->treasuryModel->trouverOrdreParId((int)$id);
-        if (!$ordre || empty($ordre['payment_id']) || ($ordre['status'] ?? '') !== 'execute') {
+        if (!$ordre || empty($ordre['payment_id']) || !in_array($ordre['status'] ?? '', ['execute','annule'], true)) {
             http_response_code(404);
             exit('Le bordereau n’est disponible qu’après exécution du paiement.');
         }
@@ -1571,6 +1577,7 @@ class TreasuryController {
         $plafondCaisseUsd = $this->treasuryModel->plafondCaisseUsd();
         $peutModifierCloturee = $this->peutModifierJourneeCloturee();
         $peutControlerCaisse = $this->peutValiderNiveau('comptable');
+        $peutOpererTresorerie = $this->peutOpererTresorerie();
 
         $this->render('caisse', compact(
             'filtres',
@@ -1584,7 +1591,8 @@ class TreasuryController {
             'soldeInitialMouvements',
             'plafondCaisseUsd',
             'peutModifierCloturee',
-            'peutControlerCaisse'
+            'peutControlerCaisse',
+            'peutOpererTresorerie'
         ));
     }
 
@@ -2334,6 +2342,8 @@ class TreasuryController {
 
     private function definitionKpiDemandes(string $metric): array {
         $definitions = [
+            'a_controler' => ['title'=>'Contrôle trésorerie', 'subtitle'=>'Demandes à vérifier avant transmission au comptable', 'filters'=>['status'=>'a_controler']],
+            'en_suspens' => ['title'=>'Demandes en suspens', 'subtitle'=>'Décisions différées avec date de rappel', 'filters'=>['status'=>'en_suspens']],
             'total' => [
                 'title' => 'Toutes les demandes',
                 'subtitle' => 'Vue consolidée du portefeuille des demandes de fonds',
@@ -2411,15 +2421,8 @@ class TreasuryController {
         return !empty($compte['actif']) ? 'actif' : 'inactif';
     }
 
-    private function montantRequisDansDeviseCompte(float $montantUsd, string $deviseCompte, float $tauxCdfUsd): float {
-        if ($deviseCompte === 'CDF') {
-            return $montantUsd * max($tauxCdfUsd, 0);
-        }
-        return $montantUsd;
-    }
-
     private function definitionRegistreDemandes(): array {
-        $statusAutorises = ['brouillon','soumise','validee_comptable','validee_direction','rejetee','ordre_emis','payee','annulee'];
+        $statusAutorises = ['brouillon','a_controler','en_suspens','soumise','validee_comptable','validee_direction','rejetee','ordre_emis','payee','annulee'];
         $urgencesAutorisees = ['basse','moyenne','haute'];
         $status = in_array($_GET['status'] ?? '', $statusAutorises, true) ? $_GET['status'] : '';
         $urgence = in_array($_GET['urgency'] ?? '', $urgencesAutorisees, true) ? $_GET['urgency'] : '';
@@ -2452,6 +2455,8 @@ class TreasuryController {
 
     private function libelleTresorerie(string $value): string {
         $labels = [
+            'a_controler' => 'À contrôler · Trésorerie',
+            'en_suspens' => 'En suspens',
             'brouillon' => 'Brouillon',
             'soumise' => 'Soumise',
             'validee_comptable' => 'Validée comptable',
@@ -2479,13 +2484,57 @@ class TreasuryController {
 
     private function validerDonneesDemande(array $donnees, array &$erreurs): void {
         if ($donnees['beneficiary'] === '') $erreurs[] = 'Le beneficiaire est obligatoire.';
+        if (mb_strlen($donnees['beneficiary']) > 200) $erreurs[] = 'Le bénéficiaire ne peut pas dépasser 200 caractères.';
         if ($donnees['objet'] === '') $erreurs[] = 'L’objet est obligatoire.';
+        if (mb_strlen($donnees['objet']) > 255) $erreurs[] = 'L’objet ne peut pas dépasser 255 caractères.';
         if ($donnees['amount'] <= 0) $erreurs[] = 'Le montant doit etre superieur a 0.';
         if (!in_array($donnees['currency'], ['USD','CDF'], true)) $erreurs[] = 'Devise invalide.';
         if ($donnees['currency'] === 'CDF' && $donnees['exchange_rate'] <= 0) $erreurs[] = 'Le taux est obligatoire pour CDF.';
         if ($donnees['category_id'] <= 0) $erreurs[] = 'La categorie est obligatoire.';
+        else {
+            $categorie = $this->financeModel->trouverCategorieParId((int)$donnees['category_id']);
+            if (!$categorie || empty($categorie['actif']) || $categorie['type_flux'] !== 'depense') $erreurs[] = 'Sélectionnez une catégorie de dépense active.';
+        }
         if (!in_array($donnees['urgency'], ['basse','moyenne','haute'], true)) $erreurs[] = 'Urgence invalide.';
-        if (empty($donnees['justification_file'])) $erreurs[] = 'Le justificatif est obligatoire.';
+    }
+
+    private function demandeAccessible(int $id): array {
+        $demande = $this->treasuryModel->trouverDemandeParId($id);
+        $perimetre = perimetreDemandesFonds();
+        $autorise = $demande && (empty($perimetre)
+            || (isset($perimetre['created_by']) && (int)$demande['created_by'] === $perimetre['created_by'])
+            || (isset($perimetre['department']) && (string)($demande['department'] ?? '') === $perimetre['department']));
+        if (!$autorise) {
+            flashMessage('erreur', 'Cette demande est introuvable ou en dehors de votre périmètre.');
+            redirect('/treasury/demandes');
+        }
+        return $demande;
+    }
+
+    private function controleComptePaiement(int $accountId, int $excludeOrder = 0): array {
+        $stmt = getDB()->prepare("SELECT COALESCE(SUM(amount),0) FROM treasury_payment_orders WHERE account_id=? AND status='emis' AND id<>?");
+        $stmt->execute([$accountId, $excludeOrder]);
+        $engagements = (float)$stmt->fetchColumn();
+        $stmt = getDB()->prepare("SELECT COUNT(*) FROM financial_transactions t JOIN financial_accounts a ON a.id=t.compte_id WHERE a.id=? AND t.statut='valide' AND t.devise<>a.devise");
+        $stmt->execute([$accountId]);
+        return ['engagements'=>$engagements, 'anomalie'=>(int)$stmt->fetchColumn() > 0];
+    }
+
+    private function peutControlerDemandes(): bool {
+        if (($_SESSION['user_role'] ?? '') === 'auditeur_interne') return false;
+        $service = $this->normaliserService((string)($_SESSION['user_service'] ?? ''));
+        return in_array($_SESSION['user_role'] ?? '', ['admin','tresorier'], true) || strpos($service, 'tresorerie') !== false;
+    }
+
+    private function notifierTresoriersDemande(int $id): void {
+        $demande = $this->treasuryModel->trouverDemandeParId($id);
+        if (!$demande) return;
+        $users = getDB()->query("SELECT id, role, service FROM users WHERE actif = 1")->fetchAll();
+        foreach ($users as $user) {
+            if ($user['role'] === 'tresorier' || $user['role'] === 'admin' || strpos($this->normaliserService((string)$user['service']), 'tresorerie') !== false) {
+                creerNotification((int)$user['id'], 'demande_controle', 'Demande ' . $demande['request_number'] . ' : contrôle trésorerie attendu.', APP_URL . '/treasury/demande-voir/' . $id);
+            }
+        }
     }
 
     private function verifierAccesTresorerie(string $niveau = 'lecture'): void {
@@ -2501,21 +2550,12 @@ class TreasuryController {
     }
 
     private function aAccesTresorerie(): bool {
-        $role = $_SESSION['user_role'] ?? '';
-        $service = $this->normaliserService((string)($_SESSION['user_service'] ?? ''));
-
-        return in_array($role, [
-                'admin','direction','chef_service','tresorier','comptable_senior',
-                'directeur_financier','directeur_general','auditeur_interne'
-            ], true)
-            || strpos($service, 'finance') !== false
-            || strpos($service, 'tresorerie') !== false
-            || strpos($service, 'comptable') !== false
-            || strpos($service, 'comptabilite') !== false;
+        return accesGlobalDemandesFonds();
     }
 
     private function peutOpererTresorerie(): bool {
         $role = $_SESSION['user_role'] ?? '';
+        if ($role === 'auditeur_interne') return false;
         return in_array($role, [
                 'admin','direction','chef_service','tresorier','comptable_senior',
                 'directeur_financier','directeur_general'
@@ -2529,6 +2569,7 @@ class TreasuryController {
 
     private function peutExecuterPaiement(): bool {
         $role = $_SESSION['user_role'] ?? '';
+        if ($role === 'auditeur_interne') return false;
         $service = $this->normaliserService((string)($_SESSION['user_service'] ?? ''));
 
         return in_array($role, ['admin','tresorier'], true)
@@ -2542,6 +2583,7 @@ class TreasuryController {
 
     private function peutValiderNiveau(string $niveau): bool {
         $role = $_SESSION['user_role'] ?? '';
+        if ($role === 'auditeur_interne') return false;
         $service = $this->normaliserService((string)($_SESSION['user_service'] ?? ''));
 
         if ($role === 'admin') {

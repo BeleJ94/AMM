@@ -14,14 +14,7 @@ $userServiceNormalise = strtr($userService, [
     'ç' => 'c',
 ]);
 $accesFinanceModule = in_array($userRole, ['admin', 'direction', 'chef_service', 'comptable_senior', 'directeur_financier', 'directeur_general'], true) || strpos($userService, 'finance') !== false;
-$accesTresorerieModule = in_array($userRole, [
-        'admin', 'direction', 'chef_service', 'tresorier', 'comptable_senior',
-        'directeur_financier', 'directeur_general', 'auditeur_interne'
-    ], true)
-    || strpos($userServiceNormalise, 'finance') !== false
-    || strpos($userServiceNormalise, 'tresorerie') !== false
-    || strpos($userServiceNormalise, 'comptable') !== false
-    || strpos($userServiceNormalise, 'comptabilite') !== false;
+$accesTresorerieModule = accesGlobalDemandesFonds();
 $sidebarMode = $sidebarMode ?? 'desktop';
 $sidebarId = $sidebarMode === 'mobile' ? 'sidebar-mobile' : 'sidebar';
 $sidebarClass = $sidebarMode === 'mobile' ? 'app-sidebar app-sidebar-mobile' : 'app-sidebar app-sidebar-desktop';
@@ -126,6 +119,7 @@ if (!function_exists('quickActionItem')) {
             <?php elseif ($accesFinanceModule): ?>
                 <?= quickActionItem(APP_URL . '/finance/facture-ajouter', 'bi-receipt-cutoff', 'Nouvelle facture') ?>
             <?php else: ?>
+                <?= quickActionItem(APP_URL . '/treasury/demande-ajouter', 'bi-card-checklist', 'Demande de fonds') ?>
                 <?= quickActionItem(APP_URL . '/courrier/ajouter', 'bi-envelope-plus', 'Nouveau courrier') ?>
                 <?= quickActionItem(APP_URL . '/projets/ajouter', 'bi-diagram-3', 'Nouveau projet') ?>
             <?php endif; ?>
@@ -133,6 +127,11 @@ if (!function_exists('quickActionItem')) {
     </div>
 
     <div class="app-sidebar-stack">
+        <?php if (!$accesTresorerieModule): ?>
+        <div class="app-sidebar-group mb-2 app-sidebar-group-priority">
+            <?= menuItem(APP_URL . '/treasury/demandes', 'bi-card-checklist', $userRole === 'chef_service' ? 'Demandes du département' : 'Mes demandes de fonds', $urlCourante, 'treasury/demandes', null, true) ?>
+        </div>
+        <?php endif; ?>
         <?php if ($accesTresorerieModule): ?>
         <div class="app-sidebar-group mb-2 app-sidebar-group-priority">
             <?= menuSectionToggle($sidebarId . '-treasury', 'bi-bank2', 'Trésorerie', $_openTreasury) ?>

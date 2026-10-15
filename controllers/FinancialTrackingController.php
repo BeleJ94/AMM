@@ -42,11 +42,13 @@ class FinancialTrackingController {
             'annee'     => (int)($_GET['annee'] ?? date('Y')),
             'mois'      => (int)($_GET['mois'] ?? date('n')),
             'recherche' => trim($_GET['recherche'] ?? ''),
+            'transaction_id' => max(0, (int)($_GET['transaction_id'] ?? 0)),
         ];
 
         $total = $this->financeModel->compterTransactions($filtres);
         $pagination = paginer($total, 25, $page);
         $transactions = $this->financeModel->listerTransactions($filtres, 25, $pagination['offset']);
+        $peutAnnulerTransaction = $this->peutAnnulerTransaction();
 
         require_once __DIR__ . '/../views/finance/transactions.php';
     }
@@ -149,6 +151,11 @@ class FinancialTrackingController {
     public function annuler(?string $id): void {
         $this->verifierAccesFinance();
 
+        if (!$this->peutAnnulerTransaction()) {
+            flashMessage('erreur', 'L’annulation d’une transaction est réservée à la Direction financière, à la Direction générale et à l’administrateur.');
+            redirect('/finance/transactions');
+        }
+
         if (empty($id) || $_SERVER['REQUEST_METHOD'] !== 'POST') {
             redirect('/finance/transactions');
         }
@@ -159,17 +166,22 @@ class FinancialTrackingController {
         }
 
         $id = (int)$id;
-        $motif = trim($_POST['motif'] ?? 'Annulation sans motif.');
+        $motif = trim($_POST['motif'] ?? '');
 
         if ($motif === '') {
             flashMessage('erreur', 'Le motif d\'annulation est obligatoire.');
             redirect('/finance/transactions');
         }
 
-        $ok = $this->financeModel->annulerTransaction($id, (int)($_SESSION['user_id'] ?? 0), $motif);
+        try {
+            $ok = $this->financeModel->annulerTransaction($id, (int)($_SESSION['user_id'] ?? 0), $motif);
+        } catch (DomainException $e) {
+            flashMessage('erreur', $e->getMessage());
+            redirect('/finance/transactions');
+        }
         if ($ok) {
             logAudit('Annulation transaction financière #' . $id, 'financial_transactions', $id, $motif);
-            flashMessage('succes', 'Transaction annulée.');
+            flashMessage('succes', 'Transaction annulée. Les opérations liées et les soldes ont été mis à jour ; l’historique est conservé.');
         } else {
             flashMessage('erreur', 'Impossible d\'annuler cette transaction.');
         }
@@ -446,12 +458,20 @@ class FinancialTrackingController {
         $role = $_SESSION['user_role'] ?? '';
         $service = strtolower((string)($_SESSION['user_service'] ?? ''));
 
-        $autorise = in_array($role, ['admin', 'direction', 'chef_service'], true)
+        $autorise = in_array($role, ['admin', 'direction', 'chef_service', 'directeur_financier', 'directeur_general'], true)
             || strpos($service, 'finance') !== false;
 
         if (!$autorise) {
             flashMessage('erreur', 'Accès refusé au module Financial Tracking.');
             redirect('/dashboard');
         }
+    }
+
+    private function peutAnnulerTransaction(): bool {
+        $role = $_SESSION['user_role'] ?? '';
+        $service = strtolower((string)($_SESSION['user_service'] ?? ''));
+        $service = strtr($service, ['è' => 'e', 'é' => 'e', 'ê' => 'e', 'à' => 'a']);
+        return in_array($role, ['admin', 'directeur_financier', 'directeur_general'], true)
+            || ($role === 'direction' && (strpos($service, 'financ') !== false || strpos($service, 'general') !== false));
     }
 }

@@ -36,9 +36,14 @@ body { margin:0; color:#17283e; font-family:DejaVu Sans,sans-serif; font-size:9p
 .trace th { width:34%; color:#718096; font-size:6px; font-weight:bold; text-transform:uppercase; }
 .trace td { color:#253950; font-weight:bold; }
 .evidence { padding:10px 12px; border:1px solid #e1e7ee; color:#44566c; background:#fafbfd; line-height:1.5; }
-.signatures { margin-top:70px; }
-.signatures td { width:30%; padding-top:8px; border-top:1px solid #7d8da0; color:#586b80; text-align:center; }
+.signatures { margin-top:20px; table-layout:fixed; page-break-inside:avoid; }
+.signatures td { width:30%; padding:10px 8px; border:1px solid #dfe6ef; color:#586b80; text-align:left; vertical-align:top; }
 .signatures .gap { width:5%; border:0; }
+.signature-role { margin-bottom:7px; color:#10243b; font-size:8px; font-weight:bold; text-transform:uppercase; }
+.signature-name { min-height:24px; color:#253950; font-size:8px; line-height:1.5; }
+.signature-space { height:60px; margin:9px 0 6px; border-bottom:1px dotted #b0bfce; }
+.signature-caption { color:#8290a0; font-size:6px; }
+.cancel-notice { margin:12px 0; padding:10px; color:#9a2634; background:#fff0f1; border:1px solid #e8c1c6; }
 .footer { position:fixed; bottom:3px; left:30px; width:735px; border-top:1px solid #dfe6ef; }
 .footer td { padding-top:6px; color:#8290a0; font-size:6px; }
 .footer-right { text-align:right; }
@@ -53,14 +58,28 @@ $paymentMethodLabel = [
 ][$ordre['payment_method'] ?? ''] ?? ucfirst(str_replace('_', ' ', (string)($ordre['payment_method'] ?? '')));
 $isCashPayment = ($ordre['payment_method'] ?? '') === 'especes' || ($ordre['account_type'] ?? '') === 'caisse';
 if ($isCashPayment) $paymentMethodLabel = 'Espèces';
+$paymentCancelled = ($ordre['status'] ?? '') === 'annule' || !empty($ordre['payment_cancelled_at']);
+$accountantName = '';
+if (!empty($ordre['request_id'])) {
+    $signatureQuery = getDB()->prepare(
+        "SELECT u.nom FROM treasury_request_approvals a LEFT JOIN users u ON u.id = a.approved_by
+         WHERE a.request_id = ? AND a.approval_level = 'comptable' AND a.decision = 'valide'
+         ORDER BY a.approved_at DESC, a.id DESC LIMIT 1"
+    );
+    $signatureQuery->execute([(int)$ordre['request_id']]);
+    $accountantName = (string)($signatureQuery->fetchColumn() ?: '');
+}
 ?>
 <div class="page">
     <div class="stripe"></div><div class="stripe-dark"></div><div class="stripe-green"></div>
     <table class="header"><tr>
         <td><?php if ($logoDataUri): ?><img class="logo" src="<?= $logoDataUri ?>" width="230" height="40" alt="AMM"><?php endif; ?><div class="brand-meta">Vente et fourniture d’énergie électrique · Lubumbashi, RDC</div></td>
-        <td class="doc-meta"><div class="doc-type">Trésorerie · Preuve interne</div><div class="doc-title"><?= $isCashPayment ? 'BON DE DÉCAISSEMENT' : 'BORDEREAU DE PAIEMENT' ?></div><div class="doc-number"><?= e($ordre['order_number']) ?> · Paiement #<?= (int)$ordre['payment_id'] ?></div><span class="status">Exécuté</span></td>
+        <td class="doc-meta"><div class="doc-type">Trésorerie · Preuve interne</div><div class="doc-title"><?= $isCashPayment ? 'BON DE DÉCAISSEMENT' : 'BORDEREAU DE PAIEMENT' ?></div><div class="doc-number"><?= e($ordre['order_number']) ?> · Paiement #<?= (int)$ordre['payment_id'] ?></div><span class="status"<?= $paymentCancelled ? ' style="color:#9a2634;background:#fff0f1;border-color:#e8c1c6"' : '' ?>><?= $paymentCancelled ? 'Annulé · archive' : 'Exécuté' ?></span></td>
     </tr></table>
     <div class="rule"></div>
+    <?php if ($paymentCancelled): ?>
+        <div class="cancel-notice"><strong>PAIEMENT ANNULÉ — DOCUMENT CONSERVÉ POUR L’HISTORIQUE</strong><br><?= e($ordre['payment_cancellation_reason'] ?? $ordre['cancellation_reason'] ?? '') ?></div>
+    <?php endif; ?>
 
     <div class="section-title">Synthèse du paiement</div>
     <table class="summary"><tr>
@@ -89,16 +108,16 @@ if ($isCashPayment) $paymentMethodLabel = 'Espèces';
     <div class="section-title">Justification et pièces</div>
     <div class="evidence">
         <?php if ($isCashPayment): ?>
-            Le présent bon constitue la preuve interne du décaissement enregistré dans AMM-ERP. La signature du bénéficiaire vaut acquit. Une copie signée peut être jointe ultérieurement au dossier.
+            Le présent bon constitue la preuve interne du décaissement enregistré dans AMM-ERP. Les signatures manuscrites du Trésorier, du Bénéficiaire et du Comptable sont recueillies sur l’exemplaire imprimé. La signature du bénéficiaire vaut acquit. La copie signée est à joindre au dossier du paiement.
         <?php else: ?>
             Le présent bordereau constitue la preuve interne de comptabilisation. La preuve externe de l’établissement bancaire ou de l’opérateur est conservée dans le dossier électronique du paiement.
         <?php endif; ?>
     </div>
 
     <table class="signatures"><tr>
-        <td>Exécuté par · Trésorerie</td><td class="gap"></td>
-        <td>Reçu par · Bénéficiaire<br><br>Date : ____ / ____ / ______</td><td class="gap"></td>
-        <td>Contrôle · Comptabilité</td>
+        <td><div class="signature-role">Trésorier</div><div class="signature-name"><?= e($ordre['executed_by_nom'] ?: 'Nom : __________________') ?><br>Remise des fonds</div><div class="signature-space"></div><div class="signature-caption">Signature manuscrite</div><div style="margin-top:8px">Date : ____ / ____ / ______</div></td><td class="gap"></td>
+        <td><div class="signature-role">Bénéficiaire</div><div class="signature-name"><?= e($ordre['beneficiary']) ?><br>Reconnaît avoir reçu les fonds</div><div class="signature-space"></div><div class="signature-caption">Signature pour acquit</div><div style="margin-top:8px">Date : ____ / ____ / ______</div></td><td class="gap"></td>
+        <td><div class="signature-role">Comptable</div><div class="signature-name"><?= e($accountantName !== '' ? $accountantName : 'Nom : __________________') ?><br>Contrôle comptable</div><div class="signature-space"></div><div class="signature-caption">Signature manuscrite</div><div style="margin-top:8px">Date : ____ / ____ / ______</div></td>
     </tr></table>
 </div>
 <table class="footer"><tr><td>AMM-ERP · Preuve interne de paiement · Document de contrôle</td><td class="footer-right">Généré le <?= date('d/m/Y à H:i') ?> par <?= e($_SESSION['user_nom'] ?? 'Utilisateur autorisé') ?></td></tr></table>

@@ -112,7 +112,16 @@
                                     if ($t['statut'] === 'brouillon') $badge = 'warning text-dark';
                                     if ($t['statut'] === 'annule') $badge = 'danger';
                                     ?>
-                                    <span class="badge bg-<?= $badge ?>"><?= e($t['statut']) ?></span>
+                                    <span class="badge bg-<?= $badge ?>"><?= e(['valide' => 'Validée', 'brouillon' => 'Brouillon', 'annule' => 'Annulée'][$t['statut']] ?? $t['statut']) ?></span>
+                                    <?php if ($t['statut'] === 'annule'): ?>
+                                        <details class="small mt-1" style="max-width:240px">
+                                            <summary class="text-muted" style="cursor:pointer">Motif et traçabilité</summary>
+                                            <div class="mt-2 text-wrap"><?= nl2br(e($t['cancellation_reason'] ?? '')) ?></div>
+                                            <div class="text-muted mt-1"><?= e($t['cancelled_by_nom'] ?? 'Utilisateur autorisé') ?>
+                                                <?php if (!empty($t['cancelled_at'])): ?> · <?= e(date('d/m/Y à H:i', strtotime($t['cancelled_at']))) ?><?php endif; ?>
+                                            </div>
+                                        </details>
+                                    <?php endif; ?>
                                 </td>
                                 <td><?= e($t['created_by_nom'] ?? '—') ?></td>
                                 <td class="text-center">
@@ -125,15 +134,15 @@
                                                 </button>
                                             </form>
                                         <?php endif; ?>
-                                        <?php if ($t['statut'] !== 'annule'): ?>
-                                            <form method="POST" action="<?= APP_URL ?>/finance/annuler/<?= (int)$t['id'] ?>" class="d-inline"
-                                                  onsubmit="return confirm('Annuler cette transaction ?')">
-                                                <input type="hidden" name="csrf_token" value="<?= genererTokenCSRF() ?>">
-                                                <input type="hidden" name="motif" value="Annulation via interface transactions.">
-                                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Annuler">
-                                                    <i class="bi bi-x-circle"></i>
-                                                </button>
-                                            </form>
+                                        <?php if ($t['statut'] !== 'annule' && $peutAnnulerTransaction): ?>
+                                            <button type="button" class="btn btn-sm btn-outline-danger" title="Annuler avec un motif"
+                                                data-bs-toggle="modal" data-bs-target="#transactionCancelModal"
+                                                data-action="<?= APP_URL ?>/finance/annuler/<?= (int)$t['id'] ?>"
+                                                data-reference="<?= e($t['reference_unique']) ?>"
+                                                data-amount="<?= e(formatMontant((float)$t['montant'], $t['devise'])) ?>"
+                                                data-account="<?= e($t['compte_nom']) ?>">
+                                                <i class="bi bi-x-circle me-1"></i>Annuler
+                                            </button>
                                         <?php endif; ?>
                                     </div>
                                 </td>
@@ -160,5 +169,51 @@
         <?php endif; ?>
     </div>
 </div>
+
+<?php if ($peutAnnulerTransaction): ?>
+<div class="modal fade" id="transactionCancelModal" tabindex="-1" aria-labelledby="transactionCancelTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <form method="POST" class="modal-content border-0 shadow" id="transactionCancelForm">
+            <input type="hidden" name="csrf_token" value="<?= genererTokenCSRF() ?>">
+            <div class="modal-header border-0 pb-0">
+                <div>
+                    <div class="text-uppercase text-muted small fw-semibold mb-1">Contrôle de la Direction</div>
+                    <h5 class="modal-title fw-bold" id="transactionCancelTitle">Annuler la transaction</h5>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
+            </div>
+            <div class="modal-body">
+                <div class="rounded-3 p-3 mb-3" style="background:#f3f6fa">
+                    <div class="d-flex justify-content-between gap-3"><strong id="transactionCancelReference"></strong><strong id="transactionCancelAmount"></strong></div>
+                    <div class="text-muted small mt-1" id="transactionCancelAccount"></div>
+                </div>
+                <p class="small text-muted">L’encaissement ou le paiement lié sera également annulé et les soldes seront recalculés. Le dossier et le motif resteront consultables dans l’historique.</p>
+                <label for="transactionCancelReason" class="form-label fw-semibold">Motif de l’annulation <span class="text-danger">*</span></label>
+                <textarea name="motif" id="transactionCancelReason" class="form-control" rows="4" required maxlength="2000" placeholder="Précisez l’erreur et la correction attendue…" aria-describedby="transactionCancelHelp"></textarea>
+                <div class="form-text" id="transactionCancelHelp">Une opération rapprochée ou rattachée à une journée clôturée nécessite une régularisation comptable.</div>
+            </div>
+            <div class="modal-footer border-0 pt-0">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Conserver la transaction</button>
+                <button type="submit" class="btn btn-danger"><i class="bi bi-x-circle me-1"></i>Confirmer l’annulation</button>
+            </div>
+        </form>
+    </div>
+</div>
+<script>
+document.getElementById('transactionCancelModal').addEventListener('show.bs.modal', function (event) {
+    const button = event.relatedTarget;
+    if (!button) return;
+    const form = document.getElementById('transactionCancelForm');
+    form.action = button.dataset.action;
+    form.reset();
+    document.getElementById('transactionCancelReference').textContent = button.dataset.reference;
+    document.getElementById('transactionCancelAmount').textContent = button.dataset.amount;
+    document.getElementById('transactionCancelAccount').textContent = button.dataset.account;
+});
+document.getElementById('transactionCancelModal').addEventListener('shown.bs.modal', function () {
+    document.getElementById('transactionCancelReason').focus();
+});
+</script>
+<?php endif; ?>
 
 <?php require_once __DIR__ . '/../layouts/footer.php'; ?>

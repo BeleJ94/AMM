@@ -34,7 +34,7 @@ foreach ($comptes as $compte) {
 
 $sessionStatus = $sessionCourante['status'] ?? 'non_ouverte';
 $journeeCloturee = in_array($sessionStatus, ['cloturee','controlee','verrouillee'], true);
-$peutCloturer = !empty($sessionCourante) && (!$journeeCloturee || $peutModifierCloturee);
+$peutCloturer = $peutOpererTresorerie && !empty($sessionCourante) && ($sessionStatus === 'ouverte' || ($sessionStatus === 'cloturee' && $peutModifierCloturee));
 $alertePlafond = (float)($stats['solde_caisse_usd'] ?? 0) > (float)$plafondCaisseUsd;
 $soldeCourantMouvements = (float)($soldeInitialMouvements ?? 0);
 $mouvementsAvecSolde = [];
@@ -225,9 +225,31 @@ $livreExcelUrl = APP_URL . '/treasury/caisse-excel?cash_account_id=' . (int)$com
         </div>
 
         <div class="card section-card mb-3 no-print"><div class="card-body py-3"><div class="row align-items-center g-3"><div class="col-lg-4"><div class="cash-context-label">Journée sélectionnée</div><div class="d-flex align-items-center gap-2 mt-1"><div class="cash-context-value"><?= formatDate($dateSelectionnee) ?> · <?= e($compteActuel['nom']??'—') ?></div><span class="cash-status-pill bg-<?= treasuryUiStatusBadge($sessionStatus) ?> bg-opacity-10 text-<?= treasuryUiStatusBadge($sessionStatus) ?>"><span class="cash-status-dot"></span><?= e(treasuryUiLabel($sessionStatus)) ?></span></div></div><div class="col-lg-8"><div class="cash-workflow">
-            <?php $workflowStates=['ouverte'=>1,'cloturee'=>2,'controlee'=>3,'verrouillee'=>4]; $currentStep=$workflowStates[$sessionStatus]??0; foreach([1=>'Ouverture',2=>'Clôture',3=>'Contrôle',4=>'Verrouillage'] as $step=>$label): ?><div class="cash-workflow-step <?= $currentStep>$step?'done':($currentStep===$step?'current':'') ?>"><span class="cash-workflow-marker"><?= $currentStep>$step?'<i class="bi bi-check"></i>':$step ?></span><?= e($label) ?></div><?php endforeach; ?>
+            <?php $workflowStates=['ouverte'=>1,'cloturee'=>2,'controlee'=>3,'verrouillee'=>3]; $currentStep=$workflowStates[$sessionStatus]??0; foreach([1=>'Ouverture',2=>'Clôture',3=>'Contrôle comptable'] as $step=>$label): ?><div class="cash-workflow-step <?= $currentStep>$step || ($step===3 && $currentStep===3)?'done':($currentStep===$step?'current':'') ?>"><span class="cash-workflow-marker"><?= $currentStep>$step || ($step===3 && $currentStep===3)?'<i class="bi bi-check"></i>':$step ?></span><?= e($label) ?></div><?php endforeach; ?>
         </div></div></div></div></div>
 
+        <div class="alert alert-<?= in_array($sessionStatus, ['controlee','verrouillee'], true) ? 'success' : 'info' ?> no-print" role="status">
+            <?php if ($sessionStatus === 'ouverte'): ?>
+                <strong>Prochaine étape : compter et clôturer la caisse.</strong>
+                Vérifiez les mouvements, saisissez le montant physique et justifiez tout écart.
+                <?php if ($peutOpererTresorerie): ?>
+                    <button type="button" class="btn btn-warning ms-2" data-bs-toggle="modal" data-bs-target="#modalClotureCaisse">Compter et clôturer la caisse</button>
+                <?php else: ?>Cette étape revient au trésorier ou à un profil habilité.<?php endif; ?>
+            <?php elseif ($sessionStatus === 'cloturee'): ?>
+                <strong>Journée clôturée — en attente du contrôle comptable.</strong>
+                Le comptable senior ou un profil habilité doit vérifier et valider le comptage.
+                <?php if ($peutControlerCaisse): ?>
+                    <button type="button" class="btn btn-success ms-2" data-bs-toggle="modal" data-bs-target="#modalControleCaisse">Effectuer le contrôle comptable</button>
+                <?php endif; ?>
+            <?php elseif (in_array($sessionStatus, ['controlee','verrouillee'], true)): ?>
+                <strong>Traitement de la journée terminé.</strong>
+                Le comptage a été clôturé et le contrôle comptable est validé.
+                Contrôlé par <?= e($sessionCourante['checked_by_nom'] ?? '—') ?>.
+                <button type="button" class="btn btn-outline-success ms-2" data-bs-toggle="modal" data-bs-target="#modalApercuLivreCaisse">Consulter le livre de caisse PDF</button>
+            <?php else: ?>
+                <strong>Prochaine étape : ouvrir la journée.</strong> Sélectionnez le compte et la date, puis utilisez « Ouvrir la journée ».
+            <?php endif; ?>
+        </div>
         <div class="row g-4">
             <div class="col-xl-8">
                 <div class="card section-card mb-4">
@@ -402,6 +424,18 @@ $livreExcelUrl = APP_URL . '/treasury/caisse-excel?cash_account_id=' . (int)$com
                     <div class="card-body">
                         <dl class="cash-control-list"><div><dt>Compte</dt><dd><?= e($compteActuel['nom']??'—') ?></dd></div><div><dt>Date</dt><dd><?= formatDate($dateSelectionnee) ?></dd></div><div><dt>Montant physique</dt><dd><?= $sessionCourante&&$sessionCourante['physical_balance']!==null?formatMontant((float)$sessionCourante['physical_balance'],$deviseMouvements):'À compter' ?></dd></div><div><dt>Écart constaté</dt><dd class="<?= $variance!==null&&abs($variance)>.001?'text-danger':'text-success' ?>"><?= $variance!==null?formatMontant($variance,$deviseMouvements):'—' ?></dd></div><div><dt>Clôturé par</dt><dd><?= e($sessionCourante['closed_by_nom']??'—') ?></dd></div><div><dt>Contrôlé par</dt><dd><?= e($sessionCourante['checked_by_nom']??'—') ?></dd></div></dl>
 
+                        <?php if ($journeeCloturee): ?>
+                            <div class="alert alert-success small">
+                                <strong>Récapitulatif de clôture</strong>
+                                <dl class="mb-0 mt-2">
+                                    <dt>Solde d’ouverture</dt><dd><?= formatMontant((float)$sessionCourante['opening_balance'], $deviseMouvements) ?></dd>
+                                    <dt>Entrées</dt><dd><?= formatMontant($cashIn, $deviseMouvements) ?></dd>
+                                    <dt>Sorties</dt><dd><?= formatMontant($cashOut, $deviseMouvements) ?></dd>
+                                    <dt>Solde théorique</dt><dd><?= formatMontant((float)$sessionCourante['theoretical_balance'], $deviseMouvements) ?></dd>
+                                </dl>
+                                Le montant physique et l’écart figurent ci-dessus.
+                            </div>
+                        <?php endif; ?>
                         <?php if (!empty($sessionCourante['close_comment'])): ?>
                             <div class="alert alert-light border small mb-2">
                                 <strong>Commentaire cloture:</strong><br><?= nl2br(e($sessionCourante['close_comment'])) ?>
@@ -603,6 +637,7 @@ $livreExcelUrl = APP_URL . '/treasury/caisse-excel?cash_account_id=' . (int)$com
             <div class="modal-footer px-4">
                 <span class="text-muted small me-auto"><i class="bi bi-shield-check me-1"></i>Document officiel généré depuis les écritures validées.</span>
                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Fermer</button>
+                <a class="btn btn-outline-primary" href="<?= e($livrePdfUrl) ?>" target="_blank" rel="noopener noreferrer"><i class="bi bi-arrows-fullscreen me-1"></i>Voir en pleine taille <span class="visually-hidden">(nouvel onglet)</span></a>
                 <a class="btn btn-primary" href="<?= e($livrePdfUrl) ?>&amp;download=1"><i class="bi bi-download me-1"></i>Télécharger le PDF</a>
             </div>
         </div>

@@ -173,12 +173,13 @@ class FinancialTracking {
     public function listerTransactions(array $filtres = [], int $limite = 20, int $offset = 0): array {
         $sql = "SELECT t.*, c.nom AS categorie_nom, c.type_flux AS categorie_type_flux,
                        a.nom AS compte_nom, a.type_compte, u.nom AS created_by_nom,
-                       ua.nom AS approved_by_nom
+                       ua.nom AS approved_by_nom, uc.nom AS cancelled_by_nom
                 FROM financial_transactions t
                 JOIN financial_categories c ON t.categorie_id = c.id
                 JOIN financial_accounts a ON t.compte_id = a.id
                 LEFT JOIN users u ON t.created_by = u.id
                 LEFT JOIN users ua ON t.approved_by = ua.id
+                LEFT JOIN users uc ON t.cancelled_by = uc.id
                 WHERE 1=1";
         $params = [];
 
@@ -263,12 +264,110 @@ class FinancialTracking {
      * Annule une transaction et consigne un motif.
      */
     public function annulerTransaction(int $id, int $userId, string $motif): bool {
-        $stmt = $this->pdo->prepare(
-            "UPDATE financial_transactions
-             SET statut = 'annule', cancelled_by = ?, cancelled_at = NOW(), cancellation_reason = ?
-             WHERE id = ? AND statut <> 'annule'"
-        );
-        return $stmt->execute([$userId, $motif, $id]);
+        $motif = trim($motif);
+        if ($motif === '' || mb_strlen($motif) > 2000 || $userId <= 0) {
+            throw new DomainException('Indiquez un motif d’annulation de 1 à 2 000 caractères.');
+        }
+
+        try {
+            $this->pdo->beginTransaction();
+            $stmt = $this->pdo->prepare(
+                "SELECT t.*, a.type_compte FROM financial_transactions t
+                 JOIN financial_accounts a ON a.id = t.compte_id
+                 WHERE t.id = ? FOR UPDATE"
+            );
+            $stmt->execute([$id]);
+            $transaction = $stmt->fetch();
+            if (!$transaction || $transaction['statut'] === 'annule') {
+                $this->pdo->rollBack();
+                return false;
+            }
+            if (!empty($transaction['contrat_id'])) {
+                throw new DomainException('Cette transaction est liée à un contrat. Corrigez d’abord le règlement dans le dossier du contrat.');
+            }
+
+            // A reconciled operation is part of a bank control: it cannot be silently removed.
+            $stmt = $this->pdo->prepare(
+                'SELECT id FROM treasury_bank_statement_lines WHERE matched_transaction_id = ? LIMIT 1 FOR UPDATE'
+            );
+            $stmt->execute([$id]);
+            if ($stmt->fetchColumn()) {
+                throw new DomainException('Cette transaction est rapprochée avec un relevé bancaire. Faites corriger le rapprochement avant son annulation.');
+            }
+
+            $cashSessionId = null;
+            if ($transaction['type_compte'] === 'caisse') {
+                // Subsequent opening balances must also remain consistent.
+                $stmt = $this->pdo->prepare(
+                    'SELECT id, session_date, status FROM treasury_cash_sessions
+                     WHERE cash_account_id = ? AND session_date >= ? ORDER BY session_date FOR UPDATE'
+                );
+                $stmt->execute([(int)$transaction['compte_id'], $transaction['date_operation']]);
+                foreach ($stmt->fetchAll() as $session) {
+                    if ($session['session_date'] > $transaction['date_operation']) {
+                        throw new DomainException('Une journée de caisse ultérieure utilise déjà ce solde. Une régularisation comptable est nécessaire.');
+                    }
+                    if ($session['status'] !== 'ouverte') {
+                        throw new DomainException('La journée de caisse est déjà clôturée ou contrôlée. Une régularisation comptable est nécessaire.');
+                    }
+                    $cashSessionId = (int)$session['id'];
+                }
+            }
+
+            $stmt = $this->pdo->prepare('SELECT id FROM treasury_receipts WHERE financial_transaction_id = ? FOR UPDATE');
+            $stmt->execute([$id]);
+            $receiptIds = $stmt->fetchAll(PDO::FETCH_COLUMN);
+            $stmt = $this->pdo->prepare(
+                'SELECT p.id, p.payment_order_id, o.request_id
+                 FROM treasury_payments p JOIN treasury_payment_orders o ON o.id = p.payment_order_id
+                 WHERE p.financial_transaction_id = ? FOR UPDATE'
+            );
+            $stmt->execute([$id]);
+            $payments = $stmt->fetchAll();
+            if (count($receiptIds) + count($payments) > 1) {
+                throw new DomainException('Plusieurs opérations sont liées à cette transaction. Un contrôle comptable est nécessaire avant annulation.');
+            }
+
+            $stmt = $this->pdo->prepare(
+                "UPDATE financial_transactions
+                 SET statut = 'annule', cancelled_by = ?, cancelled_at = NOW(), cancellation_reason = ?
+                 WHERE id = ? AND statut <> 'annule'"
+            );
+            $stmt->execute([$userId, $motif, $id]);
+            foreach ($receiptIds as $receiptId) {
+                $stmt = $this->pdo->prepare(
+                    "UPDATE treasury_receipts SET status = 'annule', cancelled_by = ?, cancelled_at = NOW(), cancellation_reason = ? WHERE id = ?"
+                );
+                $stmt->execute([$userId, $motif, (int)$receiptId]);
+            }
+            foreach ($payments as $payment) {
+                $stmt = $this->pdo->prepare(
+                    'UPDATE treasury_payments SET cancelled_by = ?, cancelled_at = NOW(), cancellation_reason = ? WHERE id = ?'
+                );
+                $stmt->execute([$userId, $motif, (int)$payment['id']]);
+                $stmt = $this->pdo->prepare(
+                    "UPDATE treasury_payment_orders SET status = 'annule', cancelled_by = ?, cancelled_at = NOW(), cancellation_reason = ? WHERE id = ?"
+                );
+                $stmt->execute([$userId, $motif, (int)$payment['payment_order_id']]);
+                $stmt = $this->pdo->prepare(
+                    "UPDATE treasury_fund_requests SET status = 'annulee', cancelled_by = ?, cancelled_at = NOW(), cancellation_reason = ? WHERE id = ?"
+                );
+                $stmt->execute([$userId, $motif, (int)$payment['request_id']]);
+            }
+            if ($cashSessionId !== null && ($receiptIds || $payments)) {
+                require_once __DIR__ . '/Treasury.php';
+                if (!(new Treasury())->recalculerSessionCaisse((int)$transaction['compte_id'], $transaction['date_operation'])) {
+                    throw new RuntimeException('Recalcul de la journée de caisse impossible.');
+                }
+            }
+            $this->pdo->commit();
+            return true;
+        } catch (Throwable $e) {
+            if ($this->pdo->inTransaction()) { $this->pdo->rollBack(); }
+            if ($e instanceof DomainException) { throw $e; }
+            error_log('Erreur annulerTransaction: ' . $e->getMessage());
+            return false;
+        }
     }
 
     /**
@@ -632,6 +731,10 @@ class FinancialTracking {
      * Injecte les filtres SQL pour les transactions.
      */
     private function appliquerFiltresTransaction(string &$sql, array &$params, array $filtres): void {
+        if (!empty($filtres['transaction_id'])) {
+            $sql .= ' AND t.id = ?';
+            $params[] = (int)$filtres['transaction_id'];
+        }
         if (!empty($filtres['type_flux'])) {
             $sql .= " AND t.type_flux = ?";
             $params[] = $filtres['type_flux'];

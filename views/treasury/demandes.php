@@ -9,6 +9,8 @@ if (!function_exists('treasuryRequestStatusBadge')) {
             case 'brouillon':
                 return 'secondary';
             case 'soumise':
+            case 'a_controler':
+            case 'en_suspens':
                 return 'warning text-dark';
             case 'validee_comptable':
                 return 'info text-dark';
@@ -44,7 +46,7 @@ if (!function_exists('treasuryRequestNextAction')) {
     function treasuryRequestNextAction(array $demande): array {
         $id = (int)$demande['id'];
         $detailUrl = APP_URL . '/treasury/demande-voir/' . $id;
-        $directionLabel = 'Double approbation Direction requise';
+        $directionLabel = 'Approbation Direction requise';
         $directionOwner = 'Direction financière et générale';
         if (!empty($demande['direction_generale_validee']) && empty($demande['direction_financiere_validee'])) {
             $directionLabel = 'Validation Direction financière requise';
@@ -57,6 +59,14 @@ if (!function_exists('treasuryRequestNextAction')) {
             'brouillon' => [
                 'label' => 'À compléter et soumettre', 'owner' => 'Demandeur',
                 'button' => 'Continuer', 'icon' => 'bi-pencil-square', 'tone' => 'secondary', 'url' => $detailUrl,
+            ],
+            'a_controler' => [
+                'label' => 'Contrôle du dossier requis', 'owner' => 'Trésorier A',
+                'button' => 'Examiner', 'icon' => 'bi-search', 'tone' => 'primary', 'url' => $detailUrl,
+            ],
+            'en_suspens' => [
+                'label' => 'En attente de reprise', 'owner' => treasuryUiLabel($demande['suspended_level'] ?? 'comptable'),
+                'button' => 'Consulter', 'icon' => 'bi-pause-circle', 'tone' => 'warning', 'url' => $detailUrl,
             ],
             'soumise' => [
                 'label' => 'Contrôle comptable requis', 'owner' => 'Comptable senior',
@@ -107,7 +117,10 @@ if (!function_exists('treasuryRequestWaitingDays')) {
 $requestExportQuery = http_build_query(array_merge(['metric' => 'registre'], array_filter($filtres ?? [], static function ($value) {
     return $value !== '';
 })));
+$accesDepartement = $accesDepartement ?? false;
+$peutCreerDemande = $peutCreerDemande ?? false;
 ?>
+<link rel="stylesheet" href="<?= APP_URL ?>/assets/css/treasury-requests.css">
 
 <style>
 .request-view-tabs { display:flex; gap:6px; flex-wrap:wrap; }
@@ -146,33 +159,36 @@ $requestExportQuery = http_build_query(array_merge(['metric' => 'registre'], arr
 @media(max-width:575.98px){.request-next-action{min-width:230px;align-items:flex-start!important;flex-direction:column}.request-action-btn{width:100%}}
 </style>
 
-<div class="container-fluid">
+<div class="container-fluid tr-page">
     <div class="page-hero">
         <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-0">
             <div>
                 <nav aria-label="breadcrumb">
                     <ol class="breadcrumb mb-1">
-                        <li class="breadcrumb-item"><a href="<?= APP_URL ?>/treasury/dashboard">Trésorerie</a></li>
+                        <li class="breadcrumb-item"><?php if (!$accesDepartement): ?><a href="<?= APP_URL ?>/treasury/dashboard">Trésorerie</a><?php else: ?>Mon département<?php endif; ?></li>
                         <li class="breadcrumb-item active">Demandes</li>
                     </ol>
                 </nav>
                 <h2>Demandes de fonds</h2>
-                <p class="text-muted small mb-0 mt-1">Pilotez les demandes, validations et passages en ordre de paiement.</p>
+                <p class="text-muted small mb-0 mt-1"><?= $accesDepartement ? 'Créez vos demandes et suivez les décisions de la trésorerie et de la direction.' : 'Pilotez les besoins des départements, les contrôles et les validations.' ?></p>
             </div>
-            <a href="<?= APP_URL ?>/treasury/demande-ajouter" class="btn btn-primary align-self-start align-self-lg-center">
+            <?php if ($peutCreerDemande): ?><a href="<?= APP_URL ?>/treasury/demande-ajouter" class="btn btn-primary align-self-start align-self-lg-center">
                 <i class="bi bi-plus-lg me-1"></i>Nouvelle demande
-            </a>
+            </a><?php endif; ?>
         </div>
     </div>
 
     <?php afficherFlash(); ?>
 
     <div class="row g-3 mb-3">
-        <div class="col-6 col-xl"><div class="card erp-kpi erp-kpi-primary request-kpi-card" role="button" tabindex="0" data-kpi="total"><div class="card-body"><div class="d-flex justify-content-between"><div class="erp-kpi-label">Toutes les demandes</div><span class="erp-kpi-icon"><i class="bi bi-card-list"></i></span></div><div class="erp-kpi-value"><?= (int)$requestStats['total'] ?></div><div class="erp-kpi-meta">Volume enregistré</div></div></div></div>
-        <div class="col-6 col-xl"><div class="card erp-kpi erp-kpi-warning request-kpi-card" role="button" tabindex="0" data-kpi="soumise"><div class="card-body"><div class="d-flex justify-content-between"><div class="erp-kpi-label">À valider</div><span class="erp-kpi-icon"><i class="bi bi-hourglass-split"></i></span></div><div class="erp-kpi-value text-warning"><?= (int)$requestStats['soumise'] ?></div><div class="erp-kpi-meta">Validation comptable</div></div></div></div>
-        <div class="col-6 col-xl"><div class="card erp-kpi request-kpi-card" role="button" tabindex="0" data-kpi="validee_comptable"><div class="card-body"><div class="d-flex justify-content-between"><div class="erp-kpi-label">Circuit Direction</div><span class="erp-kpi-icon bg-info-subtle text-info"><i class="bi bi-signpost-split"></i></span></div><div class="erp-kpi-value text-info"><?= (int)$requestStats['validee_comptable'] ?></div><div class="erp-kpi-meta">DF et DG attendues</div></div></div></div>
-        <div class="col-6 col-xl"><div class="card erp-kpi erp-kpi-success request-kpi-card" role="button" tabindex="0" data-kpi="validee_direction"><div class="card-body"><div class="d-flex justify-content-between"><div class="erp-kpi-label">Prêtes pour ordre</div><span class="erp-kpi-icon"><i class="bi bi-file-earmark-check"></i></span></div><div class="erp-kpi-value text-success"><?= (int)$requestStats['validee_direction'] ?></div><div class="erp-kpi-meta">Validées par la direction</div></div></div></div>
-        <div class="col-6 col-xl"><div class="card erp-kpi erp-kpi-danger request-kpi-card" role="button" tabindex="0" data-kpi="haute"><div class="card-body"><div class="d-flex justify-content-between"><div class="erp-kpi-label">Urgence haute</div><span class="erp-kpi-icon"><i class="bi bi-exclamation-triangle"></i></span></div><div class="erp-kpi-value text-danger"><?= (int)$requestStats['haute'] ?></div><div class="erp-kpi-meta">À prioriser</div></div></div></div>
+        <?php foreach ([
+            'total'=>['Toutes les demandes','Volume enregistré','bi-card-list','primary'],
+            'a_controler'=>['À contrôler','Trésorier A','bi-search','primary'],
+            'soumise'=>['À valider','Comptable senior','bi-shield-check','warning'],
+            'validee_comptable'=>['Circuit Direction','Visas de direction','bi-building-check','primary'],
+            'en_suspens'=>['En suspens','Reprises et rappels','bi-pause-circle','warning'],
+            'validee_direction'=>['Prêtes pour ordre','Demandes approuvées','bi-file-earmark-check','success'],
+        ] as $metric => $kpi): ?><div class="col-6 col-md-4 col-xl-2"><div class="card erp-kpi erp-kpi-<?= $kpi[3] ?> request-kpi-card h-100" role="button" tabindex="0" data-kpi="<?= $metric ?>" aria-label="Consulter <?= e($kpi[0]) ?>"><div class="card-body"><div class="d-flex justify-content-between gap-2"><div class="erp-kpi-label"><?= e($kpi[0]) ?></div><span class="erp-kpi-icon"><i class="bi <?= $kpi[2] ?>"></i></span></div><div class="erp-kpi-value"><?= (int)($requestStats[$metric] ?? 0) ?></div><div class="erp-kpi-meta"><?= e($kpi[1]) ?></div></div></div></div><?php endforeach; ?>
     </div>
 
     <div class="card filter-card mb-3">
@@ -191,7 +207,7 @@ $requestExportQuery = http_build_query(array_merge(['metric' => 'registre'], arr
                         <label class="form-label small fw-semibold">Statut</label>
                         <select class="form-select form-select-sm" name="status">
                             <option value="">Statut</option>
-                            <?php foreach (['brouillon','soumise','validee_comptable','validee_direction','rejetee','ordre_emis','payee','annulee'] as $status): ?>
+                            <?php foreach (['brouillon','a_controler','soumise','validee_comptable','validee_direction','en_suspens','rejetee','ordre_emis','payee','annulee'] as $status): ?>
                                 <option value="<?= e($status) ?>" <?= ($filtres['status'] ?? '') === $status ? 'selected' : '' ?>><?= e(treasuryUiLabel($status)) ?></option>
                             <?php endforeach; ?>
                         </select>
@@ -222,18 +238,20 @@ $requestExportQuery = http_build_query(array_merge(['metric' => 'registre'], arr
         <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
             <div><span class="erp-portlet-title"><i class="bi bi-list-check text-primary"></i>Registre des demandes</span><div class="small text-muted mt-1"><?= count($demandes) ?> résultat(s) selon les filtres métier</div></div>
             <div class="d-flex flex-wrap gap-2 align-items-center">
-                <div class="request-view-tabs" id="requestQuickViews"><button class="request-view-btn active" data-status="">Toutes</button><button class="request-view-btn" data-status="Soumise">À valider</button><button class="request-view-btn" data-status="Validée comptable">Circuit Direction</button><button class="request-view-btn" data-status="Validée direction">Prêtes pour ordre</button><button class="request-view-btn" data-status="Payée">Payées</button></div>
+                <div class="request-view-tabs" id="requestQuickViews"><button type="button" class="request-view-btn active" data-status="">Toutes</button><button type="button" class="request-view-btn" data-status="À contrôler">À contrôler</button><button type="button" class="request-view-btn" data-status="Soumise">À valider</button><button type="button" class="request-view-btn" data-status="En suspens">En suspens</button><button type="button" class="request-view-btn" data-status="Validée comptable">Direction</button><button type="button" class="request-view-btn" data-status="Validée direction">Prêtes pour ordre</button><button type="button" class="request-view-btn" data-status="Payée">Payées</button></div>
+                <?php if (!$accesDepartement): ?>
                 <a href="<?= APP_URL ?>/treasury/demandes-kpi-pdf?<?= e($requestExportQuery . '&download=1') ?>" class="btn btn-outline-danger btn-sm">
                     <i class="bi bi-file-earmark-pdf me-1"></i>PDF CFO
                 </a>
                 <a href="<?= APP_URL ?>/treasury/demandes-kpi-excel?<?= e($requestExportQuery) ?>" class="btn btn-success btn-sm">
                     <i class="bi bi-file-earmark-excel me-1"></i>Excel CFO
                 </a>
+                <?php endif; ?>
             </div>
         </div>
         <div class="card-body p-0">
             <?php if (empty($demandes)): ?>
-                <?php treasuryUiEmptyState('bi-card-checklist', 'Aucune demande trouvée', 'Ajustez les filtres ou créez une nouvelle demande de fonds.', '<a href="' . APP_URL . '/treasury/demande-ajouter" class="btn btn-sm btn-primary"><i class="bi bi-plus-lg me-1"></i>Nouvelle demande</a>'); ?>
+                <?php treasuryUiEmptyState('bi-card-checklist', 'Aucune demande trouvée', 'Ajustez les filtres ou créez une nouvelle demande de fonds.', $peutCreerDemande ? '<a href="' . APP_URL . '/treasury/demande-ajouter" class="btn btn-sm btn-primary"><i class="bi bi-plus-lg me-1"></i>Nouvelle demande</a>' : ''); ?>
             <?php else: ?>
                 <div class="table-responsive">
                     <table class="table table-hover align-middle mb-0 w-100" id="tableDemandesFonds">
@@ -253,6 +271,7 @@ $requestExportQuery = http_build_query(array_merge(['metric' => 'registre'], arr
                             <?php foreach ($demandes as $demande): ?>
                                 <?php
                                 $nextAction = treasuryRequestNextAction($demande);
+                                if ($accesDepartement) { $nextAction['url'] = APP_URL . '/treasury/demande-voir/' . (int)$demande['id']; $nextAction['button'] = 'Suivre'; }
                                 $waitingDays = treasuryRequestWaitingDays($demande);
                                 $isClosed = in_array($demande['status'], ['payee', 'annulee'], true);
                                 $isLate = !$isClosed && $waitingDays >= 3;
@@ -264,16 +283,17 @@ $requestExportQuery = http_build_query(array_merge(['metric' => 'registre'], arr
                                         </a>
                                     </td>
                                     <td data-order="<?= e($demande['request_date']) ?>"><?= formatDate($demande['request_date']) ?></td>
-                                    <td><div class="request-owner"><span class="request-owner-avatar"><?= e(strtoupper(substr((string)$demande['beneficiary'],0,1))) ?></span><span><?= e($demande['beneficiary']) ?></span></div></td>
+                                    <td><div class="request-owner"><span class="request-owner-avatar"><?= e(mb_strtoupper(mb_substr((string)$demande['beneficiary'],0,1))) ?></span><span><?= e($demande['beneficiary']) ?><?php if (!empty($demande['department'])): ?><span class="d-block small text-muted mt-1"><?= e($demande['department']) ?></span><?php endif; ?></span></div></td>
                                     <td><div class="request-object text-truncate" title="<?= e($demande['objet']) ?>"><?= e($demande['objet']) ?></div></td>
                                     <td><?= e($demande['category_nom'] ?? '—') ?></td>
-                                    <td class="fw-semibold text-end" data-order="<?= e((string)(float)$demande['amount_usd']) ?>"><?= formatMontant((float)$demande['amount'], $demande['currency']) ?></td>
+                                    <td class="fw-semibold text-end" data-order="<?= e((string)(float)$demande['amount_usd']) ?>"><?= formatMontant((float)$demande['amount'], $demande['currency']) ?><?php if (isset($demande['approved_amount']) && (float)$demande['approved_amount'] < (float)$demande['amount']): ?><span class="d-block small text-success mt-1">Autorisé : <?= formatMontant((float)$demande['approved_amount'], $demande['currency']) ?></span><?php endif; ?></td>
                                     <td><span class="badge bg-<?= treasuryUrgencyBadge($demande['urgency']) ?>"><?= e(treasuryUiLabel($demande['urgency'])) ?></span></td>
                                     <td data-search="<?= e(treasuryUiLabel($demande['status']) . ' ' . $nextAction['label'] . ' ' . $nextAction['owner']) ?>">
                                         <div class="d-flex align-items-center justify-content-between gap-3 request-next-action tone-<?= e($nextAction['tone']) ?>">
                                             <div>
                                                 <div class="request-action-label"><i class="bi <?= e($nextAction['icon']) ?> me-1 text-<?= e($nextAction['tone']) ?>"></i><?= e($nextAction['label']) ?></div>
                                                 <div class="request-action-owner"><?= e($nextAction['owner']) ?> · <span class="badge bg-light text-secondary border"><?= e(treasuryUiLabel($demande['status'])) ?></span></div>
+                                                <?php if ($demande['status'] === 'en_suspens' && !empty($demande['reminder_date'])): ?><div class="request-action-age <?= $demande['reminder_date'] <= date('Y-m-d') ? 'is-late' : '' ?>"><i class="bi bi-bell"></i>Rappel le <?= formatDate($demande['reminder_date']) ?></div><?php endif; ?>
                                                 <?php if (!$isClosed): ?>
                                                     <div class="request-action-age <?= $isLate ? 'is-late' : '' ?>"><i class="bi bi-clock"></i><?= $waitingDays === 0 ? 'Dernière action aujourd’hui' : 'Sans action depuis ' . $waitingDays . ' jour' . ($waitingDays > 1 ? 's' : '') ?></div>
                                                 <?php endif; ?>
@@ -319,10 +339,10 @@ $requestExportQuery = http_build_query(array_merge(['metric' => 'registre'], arr
                 </div>
             </div>
             <div class="modal-footer px-4">
-                <span class="text-muted small me-auto">Les exports reprennent l’intégralité des lignes de cet indicateur.</span>
+                <span class="text-muted small me-auto"><?= $accesDepartement ? 'Ces demandes sont limitées à votre périmètre de consultation.' : 'Les exports reprennent l’intégralité des lignes de cet indicateur.' ?></span>
                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Fermer</button>
-                <a class="btn btn-outline-danger" id="requestKpiPdfButton" href="#" target="_blank"><i class="bi bi-file-earmark-pdf me-1"></i>PDF CFO</a>
-                <a class="btn btn-success" id="requestKpiExcelButton" href="#"><i class="bi bi-file-earmark-excel me-1"></i>Excel CFO</a>
+                <?php if (!$accesDepartement): ?><a class="btn btn-outline-danger" id="requestKpiPdfButton" href="#" target="_blank" rel="noopener"><i class="bi bi-file-earmark-pdf me-1"></i>PDF CFO</a>
+                <a class="btn btn-success" id="requestKpiExcelButton" href="#"><i class="bi bi-file-earmark-excel me-1"></i>Excel CFO</a><?php endif; ?>
             </div>
         </div>
     </div>
@@ -365,8 +385,10 @@ function openRequestKpi(metric) {
                 + '</tr>';
         }).join('');
     }
-    document.getElementById('requestKpiPdfButton').href = APP_URL + '/treasury/demandes-kpi-pdf?metric=' + encodeURIComponent(metric);
-    document.getElementById('requestKpiExcelButton').href = APP_URL + '/treasury/demandes-kpi-excel?metric=' + encodeURIComponent(metric);
+    var pdfButton = document.getElementById('requestKpiPdfButton');
+    var excelButton = document.getElementById('requestKpiExcelButton');
+    if (pdfButton) pdfButton.href = APP_URL + '/treasury/demandes-kpi-pdf?metric=' + encodeURIComponent(metric);
+    if (excelButton) excelButton.href = APP_URL + '/treasury/demandes-kpi-excel?metric=' + encodeURIComponent(metric);
     bootstrap.Modal.getOrCreateInstance(document.getElementById('requestKpiDetailModal')).show();
 }
 

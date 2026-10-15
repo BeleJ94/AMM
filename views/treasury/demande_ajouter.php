@@ -1,270 +1,59 @@
-<?php $pageTitle = 'Nouvelle demande de fonds - ' . APP_NAME; ?>
-<?php require_once __DIR__ . '/../layouts/header.php'; ?>
-
-<div class="container-fluid">
-    <div class="row justify-content-center">
-        <div class="col-lg-10">
-            <div class="page-hero">
-                <div class="d-flex align-items-center mb-0">
-                    <a href="<?= APP_URL ?>/treasury/demandes" class="btn btn-outline-secondary btn-sm me-3"><i class="bi bi-arrow-left"></i></a>
-                    <div>
-                        <h2 class="fw-bold mb-1"><i class="bi bi-card-checklist me-2 text-primary"></i>Nouvelle demande de fonds</h2>
-                        <div class="text-muted small">Le justificatif est obligatoire avant soumission.</div>
-                    </div>
-                </div>
-            </div>
-
-            <?php afficherFlash(); ?>
-
-            <?php if (!empty($erreurs)): ?>
-                <div class="alert alert-danger">
-                    <ul class="mb-0">
-                        <?php foreach ($erreurs as $erreur): ?>
-                            <li><?= e($erreur) ?></li>
-                        <?php endforeach; ?>
-                    </ul>
-                </div>
-            <?php endif; ?>
-
-            <div class="card form-card">
-                <div class="card-body p-4">
-                    <form id="demandeFondsForm" method="POST" action="<?= APP_URL ?>/treasury/demande-ajouter" enctype="multipart/form-data">
-                        <input type="hidden" name="csrf_token" value="<?= genererTokenCSRF() ?>">
-                        <input type="hidden" name="soumettre" id="submitRequestField" value="">
-
-                        <div class="row g-3">
-                            <div class="col-md-3">
-                                <label class="form-label fw-semibold">Date <span class="text-danger">*</span></label>
-                                <input type="date" class="form-control" name="request_date" value="<?= e($_POST['request_date'] ?? date('Y-m-d')) ?>" required>
-                            </div>
-                            <div class="col-md-5">
-                                <label class="form-label fw-semibold">Beneficiaire <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control" name="beneficiary" value="<?= e($_POST['beneficiary'] ?? '') ?>" required>
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label fw-semibold">Urgence <span class="text-danger">*</span></label>
-                                <select class="form-select" name="urgency" id="urgencyField" required>
-                                    <?php $urgencyValue = $_POST['urgency'] ?? 'moyenne'; ?>
-                                    <option value="basse" <?= $urgencyValue === 'basse' ? 'selected' : '' ?>>Basse</option>
-                                    <option value="moyenne" <?= $urgencyValue === 'moyenne' ? 'selected' : '' ?>>Moyenne</option>
-                                    <option value="haute" <?= $urgencyValue === 'haute' ? 'selected' : '' ?>>Haute</option>
-                                </select>
-                            </div>
-
-                            <div class="col-12">
-                                <label class="form-label fw-semibold">Objet <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control" name="objet" value="<?= e($_POST['objet'] ?? '') ?>" placeholder="Ex: Achat fournitures, frais terrain, paiement fournisseur..." required>
-                            </div>
-
-                            <div class="col-12">
-                                <label class="form-label fw-semibold">Description</label>
-                                <textarea class="form-control" name="description" rows="3" placeholder="Contexte, details, reference facture ou besoin..."><?= e($_POST['description'] ?? '') ?></textarea>
-                            </div>
-
-                            <div class="col-md-3">
-                                <label class="form-label fw-semibold">Montant <span class="text-danger">*</span></label>
-                                <input type="number" class="form-control" name="amount" min="0" step="0.01" value="<?= e($_POST['amount'] ?? '') ?>" required>
-                            </div>
-                            <div class="col-md-2">
-                                <label class="form-label fw-semibold">Devise <span class="text-danger">*</span></label>
-                                <select class="form-select" name="currency" id="currencyField" required>
-                                    <option value="USD" <?= ($_POST['currency'] ?? 'USD') === 'USD' ? 'selected' : '' ?>>USD</option>
-                                    <option value="CDF" <?= ($_POST['currency'] ?? '') === 'CDF' ? 'selected' : '' ?>>CDF</option>
-                                </select>
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label fw-semibold">Taux CDF/USD</label>
-                                <input type="number" class="form-control" name="exchange_rate" id="exchangeRateField" min="0" step="0.0001" value="<?= e($_POST['exchange_rate'] ?? '') ?>" placeholder="Ex: 2850">
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label fw-semibold">Categorie <span class="text-danger">*</span></label>
-                                <select class="form-select" name="category_id" id="categoryField" required>
-                                    <option value="">-- Selectionner --</option>
-                                    <?php foreach ($categories as $categorie): ?>
-                                        <option value="<?= (int)$categorie['id'] ?>" <?= (int)($_POST['category_id'] ?? 0) === (int)$categorie['id'] ? 'selected' : '' ?>>
-                                            <?= e($categorie['nom']) ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-
-                            <div class="col-md-6">
-                                <label class="form-label fw-semibold">Compte souhaite</label>
-                                <select class="form-select" name="preferred_account_id">
-                                    <option value="">-- Optionnel --</option>
-                                    <?php foreach ($comptes as $compte): ?>
-                                        <option value="<?= (int)$compte['id'] ?>" <?= (int)($_POST['preferred_account_id'] ?? 0) === (int)$compte['id'] ? 'selected' : '' ?>>
-                                            <?= e($compte['nom']) ?> (<?= e($compte['devise']) ?>)
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label fw-semibold">Justificatif <span class="text-danger">*</span></label>
-                                <input type="file" class="form-control" name="justification_file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx" required>
-                                <small class="text-muted">Facture, bon d'achat, note de besoin ou autre piece justificative.</small>
-                            </div>
-                        </div>
-
-                        <hr class="my-4">
-
-                        <div class="d-flex flex-wrap gap-2 justify-content-end">
-                            <a href="<?= APP_URL ?>/treasury/demandes" class="btn btn-outline-secondary">Annuler</a>
-                            <button type="submit" class="btn btn-outline-primary" data-request-action="draft">
-                                <i class="bi bi-save me-1"></i>Enregistrer brouillon
-                            </button>
-                            <button type="submit" class="btn btn-primary" data-request-action="submit">
-                                <i class="bi bi-send me-1"></i>Enregistrer et soumettre
-                            </button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>
+<?php
+$pageTitle = 'Nouvelle demande de fonds - ' . APP_NAME;
+require_once __DIR__ . '/../layouts/header.php';
+$postedItems = isset($_POST['items']) && is_array($_POST['items']) ? array_values($_POST['items']) : [];
+if (!$postedItems) $postedItems = [['description' => '', 'quantity' => '1', 'unit_price' => '']];
+$departmentValue = !empty($accesDepartement) ? ($_SESSION['user_service'] ?? '') : ($_POST['department'] ?? $departementDemandeur ?? $_SESSION['user_service'] ?? '');
+$requesterValue = !empty($accesDepartement) ? ($_SESSION['user_nom'] ?? '') : ($_POST['requester_name'] ?? $nomDemandeur ?? $_SESSION['user_nom'] ?? '');
+$departmentMissing = !empty($accesDepartement) && trim((string)$departmentValue) === '';
+?>
+<link rel="stylesheet" href="<?= APP_URL ?>/assets/css/treasury-requests.css">
+<div class="container-fluid tr-page">
+    <div class="tr-heading d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+        <div><nav aria-label="Fil d’Ariane"><ol class="breadcrumb small mb-2"><li class="breadcrumb-item"><a href="<?= APP_URL ?>/treasury/demandes">Demandes de fonds</a></li><li class="breadcrumb-item active" aria-current="page">Nouvelle demande</li></ol></nav><h1>Demande d’achat / fonds</h1><p class="text-muted mb-0 mt-2">Décrivez votre besoin. La trésorerie contrôle le dossier avant sa validation.</p></div>
+        <span class="tr-status"><i class="bi bi-pencil-square"></i> Nouvelle demande</span>
     </div>
-</div>
-
-<div class="modal fade" id="confirmDemandeModal" tabindex="-1" aria-labelledby="confirmDemandeModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content border-0 shadow">
-            <div class="modal-header border-0 pb-0 px-4 pt-4">
-                <div class="d-flex align-items-center gap-3">
-                    <span class="d-inline-flex align-items-center justify-content-center rounded-circle bg-primary-subtle text-primary" style="width:42px;height:42px">
-                        <i class="bi bi-shield-check fs-5"></i>
-                    </span>
-                    <div>
-                        <h5 class="modal-title fw-bold mb-1" id="confirmDemandeModalLabel">Confirmer la demande de fonds</h5>
-                        <div class="text-muted small" id="confirmRequestSubtitle">Vérifiez les informations avant l’enregistrement.</div>
+    <?php afficherFlash(); ?>
+    <?php if ($departmentMissing): ?><div class="alert alert-warning" role="alert"><i class="bi bi-building-exclamation me-2"></i>Votre département n’est pas renseigné. Contactez un administrateur pour compléter votre profil avant de créer une demande.</div><?php endif; ?>
+    <?php if (!empty($erreurs)): ?><div class="alert alert-danger" role="alert"><strong>Vérifiez les informations suivantes :</strong><ul class="mb-0 mt-2"><?php foreach ($erreurs as $erreur): ?><li><?= e($erreur) ?></li><?php endforeach; ?></ul></div><?php endif; ?>
+    <form id="demandeFondsForm" method="POST" action="<?= APP_URL ?>/treasury/demande-ajouter" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="<?= genererTokenCSRF() ?>"><input type="hidden" name="soumettre" id="submitRequestField" value="">
+        <div class="row g-4">
+            <div class="col-xl-8">
+                <section class="card tr-card mb-4" aria-labelledby="requestGeneralTitle">
+                    <div class="tr-section-heading"><span class="tr-section-number">01</span><div><h2 id="requestGeneralTitle">Informations générales</h2><p>Identifiez le département et le bénéficiaire de la demande.</p></div></div>
+                    <div class="card-body p-4 pt-0"><div class="row g-3">
+                        <div class="col-md-6"><label for="departmentField" class="form-label">Département demandeur <span class="text-danger">*</span></label><input id="departmentField" class="form-control" type="text" name="department" maxlength="100" value="<?= e($departmentValue) ?>" required <?= !empty($accesDepartement) ? 'readonly' : '' ?> placeholder="Ex. Ressources humaines"></div>
+                        <div class="col-md-6"><label for="requesterField" class="form-label">Nom du demandeur <span class="text-danger">*</span></label><input id="requesterField" class="form-control" type="text" name="requester_name" maxlength="150" value="<?= e($requesterValue) ?>" required <?= !empty($accesDepartement) ? 'readonly' : '' ?>></div>
+                        <div class="col-md-4"><label for="requestDate" class="form-label">Date <span class="text-danger">*</span></label><input id="requestDate" type="date" class="form-control" name="request_date" value="<?= e($_POST['request_date'] ?? date('Y-m-d')) ?>" required></div>
+                        <div class="col-md-4"><label for="beneficiaryField" class="form-label">Bénéficiaire <span class="text-danger">*</span></label><input id="beneficiaryField" type="text" class="form-control" name="beneficiary" maxlength="200" value="<?= e($_POST['beneficiary'] ?? '') ?>" placeholder="Personne ou fournisseur" required></div>
+                        <div class="col-md-4"><label for="urgencyField" class="form-label">Priorité</label><select id="urgencyField" class="form-select" name="urgency"><?php foreach (['basse' => 'Basse', 'moyenne' => 'Normale', 'haute' => 'Haute'] as $value => $label): ?><option value="<?= $value ?>" <?= ($_POST['urgency'] ?? 'moyenne') === $value ? 'selected' : '' ?>><?= $label ?></option><?php endforeach; ?></select></div>
+                        <div class="col-12"><label for="objectField" class="form-label">Objet de la demande <span class="text-danger">*</span></label><input id="objectField" type="text" class="form-control" name="objet" maxlength="255" value="<?= e($_POST['objet'] ?? '') ?>" placeholder="Ex. Équipement informatique du département" required></div>
+                    </div></div>
+                </section>
+                <section class="card tr-card mb-4" aria-labelledby="requestItemsTitle">
+                    <div class="tr-section-heading"><span class="tr-section-number">02</span><div><h2 id="requestItemsTitle">Détail des biens et services</h2><p>Le total se calcule à partir des quantités et des prix unitaires estimés.</p></div></div>
+                    <div class="card-body p-4 pt-0">
+                        <div class="row g-3 mb-4"><div class="col-md-4"><label for="currencyField" class="form-label">Devise</label><select class="form-select" name="currency" id="currencyField"><?php foreach (['USD', 'CDF'] as $currency): ?><option value="<?= $currency ?>" <?= ($_POST['currency'] ?? 'USD') === $currency ? 'selected' : '' ?>><?= $currency ?></option><?php endforeach; ?></select></div><div class="col-md-5" id="exchangeRateGroup"><label for="exchangeRateField" class="form-label">Taux : 1 USD = … CDF <span class="text-danger">*</span></label><input type="number" id="exchangeRateField" name="exchange_rate" class="form-control" min="0.0001" step="0.0001" value="<?= e($_POST['exchange_rate'] ?? '') ?>" placeholder="Saisissez le taux applicable"></div></div>
+                        <div class="table-responsive tr-items-table-wrap"><table class="table tr-items-table align-middle mb-0"><thead><tr><th scope="col">N°</th><th scope="col">Services / Biens</th><th scope="col">Quantité</th><th scope="col">Prix unitaire estimé</th><th scope="col" class="text-end">Total</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead><tbody id="requestItems">
+                        <?php foreach ($postedItems as $index => $item): ?><tr class="tr-item"><td class="tr-line-number"><?= $index + 1 ?></td><td><input type="text" class="form-control" name="items[<?= $index ?>][description]" value="<?= e(is_array($item) ? ($item['description'] ?? '') : '') ?>" aria-label="Bien ou service, ligne <?= $index + 1 ?>" maxlength="500" placeholder="Désignation du bien ou service" required data-item="description"></td><td><input type="number" class="form-control" name="items[<?= $index ?>][quantity]" value="<?= e(is_array($item) ? ($item['quantity'] ?? '1') : '1') ?>" aria-label="Quantité, ligne <?= $index + 1 ?>" min="0.001" max="999999999" step="0.001" required data-item="quantity"></td><td><input type="number" class="form-control" name="items[<?= $index ?>][unit_price]" value="<?= e(is_array($item) ? ($item['unit_price'] ?? '') : '') ?>" aria-label="Prix unitaire estimé, ligne <?= $index + 1 ?>" min="0" max="9999999999999.99" step="0.01" required data-item="unit_price" placeholder="0,00"></td><td class="tr-line-total text-end text-nowrap">0,00</td><td><button type="button" class="btn btn-sm tr-remove-item" aria-label="Supprimer la ligne <?= $index + 1 ?>" title="Supprimer cette ligne"><i class="bi bi-trash3"></i></button></td></tr><?php endforeach; ?>
+                        </tbody><tfoot><tr><td colspan="4" class="text-end">Total de la demande</td><td class="text-end text-nowrap" id="requestTableTotal">0,00 USD</td><td></td></tr></tfoot></table></div>
+                        <button type="button" class="btn btn-outline-primary btn-sm mt-3" id="addRequestItem"><i class="bi bi-plus-lg me-1"></i>Ajouter une ligne</button><input type="hidden" name="amount" id="amountField" value="<?= e($_POST['amount'] ?? '0') ?>">
+                        <div class="row g-3 mt-2"><div class="<?= empty($comptes) ? 'col-12' : 'col-md-6' ?>"><label for="categoryField" class="form-label">Catégorie budgétaire <span class="text-danger">*</span></label><select class="form-select" name="category_id" id="categoryField" required><option value="">Sélectionner une catégorie</option><?php foreach ($categories as $categorie): ?><option value="<?= (int)$categorie['id'] ?>" <?= (int)($_POST['category_id'] ?? 0) === (int)$categorie['id'] ? 'selected' : '' ?>><?= e($categorie['nom']) ?></option><?php endforeach; ?></select></div><?php if (!empty($comptes)): ?><div class="col-md-6"><label for="accountField" class="form-label">Compte souhaité <span class="tr-optional">Facultatif</span></label><select class="form-select" name="preferred_account_id" id="accountField"><option value="">À déterminer par la trésorerie</option><?php foreach ($comptes as $compte): ?><option value="<?= (int)$compte['id'] ?>" <?= (int)($_POST['preferred_account_id'] ?? 0) === (int)$compte['id'] ? 'selected' : '' ?>><?= e($compte['nom']) ?> · <?= e($compte['devise']) ?></option><?php endforeach; ?></select></div><?php endif; ?></div>
                     </div>
-                </div>
-                <button type="button" class="btn-close align-self-start" data-bs-dismiss="modal" aria-label="Fermer"></button>
+                </section>
+                <section class="card tr-card mb-4" aria-labelledby="requestJustificationTitle">
+                    <div class="tr-section-heading"><span class="tr-section-number">03</span><div><h2 id="requestJustificationTitle">Justification et pièce jointe</h2><p>Précisez la nécessité de l’achat ou des fonds et ajoutez un document de référence si nécessaire.</p></div></div>
+                    <div class="card-body p-4 pt-0"><label for="descriptionField" class="form-label">Justification du besoin <span class="text-danger">*</span></label><textarea id="descriptionField" class="form-control mb-4" name="description" rows="4" required placeholder="À quel besoin répond cette demande ? Quel résultat est attendu ?"><?= e($_POST['description'] ?? '') ?></textarea>
+                    <label for="justificationFile" class="form-label">Justificatif <span class="tr-optional">Facultatif</span></label><div class="tr-upload"><i class="bi bi-cloud-arrow-up"></i><div class="flex-grow-1"><strong>Ajouter une facture, un devis ou une note de besoin</strong><div class="small text-muted mt-1">PDF, image ou document bureautique. Taille maximale : 10 Mo.</div><input type="file" id="justificationFile" class="form-control mt-3" name="justification_file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx"><div id="requestFileFeedback" class="small mt-2" aria-live="polite"></div></div><button id="removeRequestFile" type="button" class="btn btn-sm btn-outline-secondary d-none" aria-label="Retirer la pièce jointe">Retirer</button></div>
+                    <?php if (!empty($erreurs)): ?><div class="form-text">Après une erreur, sélectionnez à nouveau votre pièce jointe.</div><?php endif; ?></div>
+                </section>
             </div>
-            <div class="modal-body px-4 py-4">
-                <div class="rounded-3 border bg-light-subtle p-3">
-                    <div class="d-flex justify-content-between gap-3 py-1"><span class="text-muted small">Bénéficiaire</span><strong class="small text-end" id="confirmBeneficiary">—</strong></div>
-                    <div class="d-flex justify-content-between gap-3 py-1"><span class="text-muted small">Objet</span><strong class="small text-end" id="confirmObject">—</strong></div>
-                    <div class="d-flex justify-content-between gap-3 py-1"><span class="text-muted small">Montant</span><strong class="text-primary text-end" id="confirmRequestAmount">—</strong></div>
-                    <div class="d-flex justify-content-between gap-3 py-1"><span class="text-muted small">Catégorie</span><strong class="small text-end" id="confirmCategory">—</strong></div>
-                    <div class="d-flex justify-content-between gap-3 py-1"><span class="text-muted small">Urgence</span><strong class="small text-end" id="confirmUrgency">—</strong></div>
-                </div>
-                <div class="alert border-0 small mt-3 mb-0" id="confirmRequestNotice"></div>
-            </div>
-            <div class="modal-footer border-0 px-4 pb-4 pt-0">
-                <button type="button" class="btn btn-outline-secondary" id="cancelRequestConfirmation" data-bs-dismiss="modal">Revenir au formulaire</button>
-                <button type="button" class="btn btn-primary px-4" id="confirmRequestButton"><i class="bi bi-check2-circle me-1"></i>Confirmer</button>
-            </div>
+            <aside class="col-xl-4"><div class="tr-sticky"><section class="card tr-summary mb-3" aria-labelledby="requestSummaryTitle"><div class="card-body p-4"><div class="tr-eyebrow mb-3">Synthèse de la demande</div><h2 class="visually-hidden" id="requestSummaryTitle">Synthèse financière</h2><div class="tr-summary-amount" id="requestSummaryAmount" aria-live="polite">0,00 USD</div><div class="tr-summary-equivalent" id="requestSummaryEquivalent">Montant de référence en USD</div><div class="tr-summary-rate small mt-2" id="requestSummaryRate"></div><hr><dl class="tr-summary-details"><div><dt>Département</dt><dd id="requestSummaryDepartment">—</dd></div><div><dt>Bénéficiaire</dt><dd id="requestSummaryBeneficiary">—</dd></div><div><dt>Lignes de besoin</dt><dd id="requestSummaryItemCount">1</dd></div></dl><div class="tr-route mt-4"><div class="tr-eyebrow mb-3">Circuit de traitement</div><div><span>1</span>Département demandeur</div><div><span>2</span>Contrôle du Trésorier A</div><div><span>3</span>Comptable senior</div><div><span>4</span>Direction financière / générale</div><div><span>5</span>Ordre de paiement et décaissement</div></div></div></section><div class="tr-tip"><i class="bi bi-info-circle"></i><span>Le brouillon est enregistré sans transmission. La soumission envoie le dossier au Trésorier A pour contrôle.</span></div></div></aside>
         </div>
-    </div>
+        <div class="tr-action-bar d-flex flex-wrap justify-content-between align-items-center gap-3"><a href="<?= APP_URL ?>/treasury/demandes" class="btn btn-outline-secondary">Annuler</a><div class="d-flex flex-wrap gap-2"><button type="submit" class="btn btn-outline-primary" data-request-action="draft" <?= $departmentMissing ? 'disabled' : '' ?>><i class="bi bi-save me-1"></i>Enregistrer le brouillon</button><button type="submit" class="btn btn-primary" data-request-action="submit" <?= $departmentMissing ? 'disabled' : '' ?>><i class="bi bi-send me-1"></i>Vérifier et soumettre</button></div></div>
+    </form>
 </div>
-
-<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-<script>
-(function () {
-    var form = document.getElementById('demandeFondsForm');
-    var currencyField = document.getElementById('currencyField');
-    var exchangeRateField = document.getElementById('exchangeRateField');
-    var categoryField = document.getElementById('categoryField');
-    var urgencyField = document.getElementById('urgencyField');
-    var submitRequestField = document.getElementById('submitRequestField');
-    var modalElement = document.getElementById('confirmDemandeModal');
-    var confirmModal = modalElement ? bootstrap.Modal.getOrCreateInstance(modalElement) : null;
-    var confirmButton = document.getElementById('confirmRequestButton');
-    var cancelButton = document.getElementById('cancelRequestConfirmation');
-    var requestedAction = 'draft';
-    var isSubmitting = false;
-
-    function toggleExchangeRate() {
-        if (!currencyField || !exchangeRateField) return;
-        var isCDF = currencyField.value === 'CDF';
-        exchangeRateField.required = isCDF;
-        exchangeRateField.disabled = !isCDF;
-        if (!isCDF) exchangeRateField.value = '';
-    }
-
-    if (currencyField) {
-        currencyField.addEventListener('change', toggleExchangeRate);
-        toggleExchangeRate();
-    }
-
-    if (form) {
-        form.addEventListener('click', function (event) {
-            var actionButton = event.target.closest('[data-request-action]');
-            if (actionButton) requestedAction = actionButton.getAttribute('data-request-action');
-        });
-
-        form.addEventListener('submit', function (event) {
-            if (isSubmitting) return;
-            event.preventDefault();
-            if (!form.checkValidity()) {
-                form.reportValidity();
-                return;
-            }
-
-            var beneficiary = form.querySelector('[name="beneficiary"]');
-            var objectField = form.querySelector('[name="objet"]');
-            var amount = form.querySelector('[name="amount"]');
-            document.getElementById('confirmBeneficiary').textContent = beneficiary ? beneficiary.value.trim() : '—';
-            document.getElementById('confirmObject').textContent = objectField ? objectField.value.trim() : '—';
-            document.getElementById('confirmRequestAmount').textContent =
-                (amount ? Number(amount.value).toLocaleString('fr-FR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '0,00')
-                + ' ' + (currencyField ? currencyField.value : '');
-            document.getElementById('confirmCategory').textContent =
-                categoryField && categoryField.selectedIndex >= 0 ? categoryField.options[categoryField.selectedIndex].text.trim() : '—';
-            document.getElementById('confirmUrgency').textContent =
-                urgencyField && urgencyField.selectedIndex >= 0 ? urgencyField.options[urgencyField.selectedIndex].text.trim() : '—';
-
-            var isSubmission = requestedAction === 'submit';
-            document.getElementById('confirmRequestSubtitle').textContent = isSubmission
-                ? 'La demande entrera immédiatement dans le circuit de validation.'
-                : 'La demande restera modifiable au statut brouillon.';
-            var notice = document.getElementById('confirmRequestNotice');
-            notice.className = 'alert border-0 small mt-3 mb-0 ' + (isSubmission ? 'alert-warning' : 'alert-info');
-            notice.innerHTML = isSubmission
-                ? '<i class="bi bi-send me-2"></i>Après confirmation, la demande sera transmise au Comptable senior.'
-                : '<i class="bi bi-info-circle me-2"></i>Le brouillon pourra être vérifié avant sa soumission.';
-            confirmButton.className = 'btn px-4 ' + (isSubmission ? 'btn-primary' : 'btn-outline-primary');
-            confirmButton.innerHTML = '<i class="bi ' + (isSubmission ? 'bi-send' : 'bi-save') + ' me-1"></i>'
-                + (isSubmission ? 'Confirmer et soumettre' : 'Enregistrer le brouillon');
-
-            if (confirmModal) confirmModal.show();
-        });
-    }
-
-    if (confirmButton && form) {
-        confirmButton.addEventListener('click', function () {
-            isSubmitting = true;
-            submitRequestField.value = requestedAction === 'submit' ? '1' : '';
-            confirmButton.disabled = true;
-            confirmButton.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Traitement…';
-            if (confirmModal) confirmModal.hide();
-            form.submit();
-        });
-    }
-
-    if (cancelButton) {
-        cancelButton.addEventListener('click', function () {
-            Swal.fire({
-                icon: 'info',
-                title: 'Enregistrement suspendu',
-                text: 'Vous pouvez vérifier ou corriger la demande avant de continuer.',
-                confirmButtonText: 'Continuer',
-                confirmButtonColor: '#1769e0',
-                customClass: { popup: 'rounded-3' }
-            });
-        });
-    }
-
-    <?php if (!empty($erreurs)): ?>
-    Swal.fire({
-        icon: 'error',
-        title: 'Demande refusée',
-        html: <?= json_encode(implode('<br>', array_map(static fn($message) => e($message), $erreurs)), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>,
-        confirmButtonText: 'Corriger les informations',
-        confirmButtonColor: '#1769e0',
-        customClass: { popup: 'rounded-3' }
-    });
-    <?php endif; ?>
-})();
-</script>
-
+<div class="modal fade" id="confirmDemandeModal" tabindex="-1" aria-labelledby="confirmDemandeModalLabel" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content tr-modal"><div class="modal-header"><div><div class="tr-eyebrow mb-1">Vérification du dossier</div><h2 class="modal-title h5" id="confirmDemandeModalLabel">Confirmer la demande</h2></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button></div><div class="modal-body p-4"><div class="tr-confirm-amount" id="confirmRequestAmount"></div><p class="text-muted small" id="confirmRequestEquivalent"></p><dl class="tr-summary-details"><div><dt>Département</dt><dd id="confirmDepartment"></dd></div><div><dt>Bénéficiaire</dt><dd id="confirmBeneficiary"></dd></div><div><dt>Objet</dt><dd id="confirmObject"></dd></div></dl><div class="alert alert-primary small mb-0 mt-3" id="confirmRequestNotice"></div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Revenir au formulaire</button><button type="button" class="btn btn-primary" id="confirmRequestButton">Confirmer</button></div></div></div></div>
+<script src="<?= APP_URL ?>/assets/js/treasury-requests.js"></script>
 <?php require_once __DIR__ . '/../layouts/footer.php'; ?>

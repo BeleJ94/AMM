@@ -20,7 +20,7 @@ $externalProofRequired = $hasOrder && !$isCashPayment;
 $isOrderIssuer = $hasOrder
     && (int)($ordre['issued_by'] ?? 0) === (int)($_SESSION['user_id'] ?? 0)
     && (int)($_SESSION['user_id'] ?? 0) > 0;
-$montant = $hasOrder ? (float)$ordre['amount'] : (float)$demande['amount'];
+$montant = $hasOrder ? (float)$ordre['amount'] : (float)($demande['approved_amount'] ?? $demande['amount']);
 $devise = $hasOrder ? (string)$ordre['currency'] : (string)$demande['currency'];
 $workflowSteps = [
     'validee_direction' => ['label' => 'Demande validée', 'icon' => 'bi-shield-check'],
@@ -423,6 +423,12 @@ document.addEventListener('DOMContentLoaded', function () {
                         <dd class="col-7"><?= e($demande['objet']) ?></dd>
                         <dt class="col-5 text-muted">Montant</dt>
                         <dd class="col-7 fw-semibold"><?= formatMontant((float)$demande['amount'], $demande['currency']) ?></dd>
+                        <dt class="col-5 text-muted">Montant autorisé</dt>
+                        <dd class="col-7 fw-semibold text-success"><?= formatMontant((float)($demande['approved_amount'] ?? $demande['amount']), $demande['currency']) ?></dd>
+                        <?php if (isset($demande['approved_amount']) && (float)$demande['approved_amount'] < (float)$demande['amount']): ?>
+                            <dt class="col-5 text-muted">Reliquat non autorisé</dt>
+                            <dd class="col-7"><?= formatMontant((float)$demande['amount'] - (float)$demande['approved_amount'], $demande['currency']) ?></dd>
+                        <?php endif; ?>
                         <dt class="col-5 text-muted">Statut</dt>
                         <dd class="col-7">
                             <span class="badge bg-<?= treasuryUiStatusBadge($demande['status']) ?>"><?= e(treasuryUiLabel($demande['status'])) ?></span>
@@ -522,11 +528,13 @@ document.addEventListener('DOMContentLoaded', function () {
                                                         data-required="<?= e((string)(float)$compte['montant_requis']) ?>"
                                                         data-after="<?= e((string)(float)$compte['solde_apres']) ?>"
                                                         data-covered="<?= !empty($compte['couverture_suffisante']) ? '1' : '0' ?>"
+                                                        data-currency-anomaly="<?= !empty($compte['anomalie_devise']) ? '1' : '0' ?>"
                                                         <?= (int)($demande['preferred_account_id'] ?? 0) === (int)$compte['id'] ? 'selected' : '' ?>>
-                                                    <?= e($compte['nom']) ?> · <?= formatMontant((float)$compte['solde_disponible'], $compte['devise']) ?> disponible
+                                                    <?= e($compte['nom']) ?> · <?= !empty($compte['anomalie_devise']) ? 'Solde à vérifier · devises incohérentes' : formatMontant((float)$compte['solde_disponible'], $compte['devise']) . ' disponible' ?>
                                                 </option>
                                             <?php endforeach; ?>
                                         </select>
+                                        <div class="form-text">Comptes dans la devise de la demande. Le disponible tient compte des ordres déjà engagés.</div>
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label fw-semibold">Référence paiement</label>
@@ -696,13 +704,16 @@ document.addEventListener('DOMContentLoaded', function () {
                             <?php endif; ?>
                         </div>
                     </div>
-                <?php elseif ($ordre['status'] === 'execute'): ?>
+                <?php elseif ($ordre['status'] === 'execute' || ($ordre['status'] === 'annule' && !empty($ordre['payment_id']))): ?>
                     <div class="card section-card">
                         <div class="card-header bg-transparent border-0 fw-semibold">
-                            <i class="bi bi-check2-circle me-2 text-success"></i>Paiement exécuté
+                            <i class="bi bi-check2-circle me-2 text-success"></i><?= $ordre['status'] === 'annule' ? 'Paiement annulé · historique conservé' : 'Paiement exécuté' ?>
                         </div>
                         <div class="card-body">
                             <div class="row g-3">
+                                <?php if ($ordre['status'] === 'annule'): ?>
+                                    <div class="col-12"><div class="alert alert-warning mb-0">Cette opération a été annulée. Elle est conservée pour consultation et exclue des mouvements actifs. <?= e($ordre['payment_cancellation_reason'] ?? $ordre['cancellation_reason'] ?? '') ?></div></div>
+                                <?php endif; ?>
                                 <div class="col-md-4">
                                     <div class="text-muted small">Date paiement</div>
                                     <div class="fw-semibold"><?= !empty($ordre['payment_date']) ? formatDate($ordre['payment_date']) : '—' ?></div>
@@ -713,7 +724,7 @@ document.addEventListener('DOMContentLoaded', function () {
                                 </div>
                                 <div class="col-md-4">
                                     <div class="text-muted small">Transaction financière</div>
-                                    <div class="fw-semibold"><?= !empty($ordre['financial_transaction_id']) ? '#' . (int)$ordre['financial_transaction_id'] : '—' ?></div>
+                                    <div class="fw-semibold"><?php if (!empty($ordre['financial_transaction_id'])): ?><a href="<?= APP_URL ?>/finance/transactions?transaction_id=<?= (int)$ordre['financial_transaction_id'] ?>&amp;annee=0&amp;mois=0">#<?= (int)$ordre['financial_transaction_id'] ?> · Consulter</a><?php else: ?>—<?php endif; ?></div>
                                 </div>
                                 <div class="col-md-6">
                                     <div class="text-muted small">Référence paiement</div>
@@ -775,7 +786,7 @@ document.addEventListener('DOMContentLoaded', function () {
             <div class="modal-body p-4">
                 <div class="order-confirm-summary">
                     <div class="d-flex justify-content-between gap-3 py-1"><span class="small text-muted">Bénéficiaire</span><strong class="small text-end"><?= e($demande['beneficiary']) ?></strong></div>
-                    <div class="d-flex justify-content-between gap-3 py-1"><span class="small text-muted">Montant</span><strong class="text-primary text-end"><?= formatMontant((float)$demande['amount'], $demande['currency']) ?></strong></div>
+                    <div class="d-flex justify-content-between gap-3 py-1"><span class="small text-muted">Montant autorisé</span><strong class="text-primary text-end"><?= formatMontant($montant, $devise) ?></strong></div>
                     <div class="d-flex justify-content-between gap-3 py-1"><span class="small text-muted">Mode</span><strong class="small text-end" id="issueMethodSummary">—</strong></div>
                     <div class="d-flex justify-content-between gap-3 py-1"><span class="small text-muted">Compte</span><strong class="small text-end" id="issueAccountSummary">—</strong></div>
                     <div class="d-flex justify-content-between gap-3 py-1"><span class="small text-muted">Solde disponible</span><strong class="small text-end" id="issueModalBalance">—</strong></div>
@@ -853,7 +864,7 @@ document.addEventListener('DOMContentLoaded', function () {
         after.className = 'order-balance-value ' + (covered ? 'text-success' : 'text-danger');
         var status = document.getElementById('issueBalanceStatus');
         status.className = 'order-balance-status ' + (covered ? 'text-success' : 'text-danger');
-        var message = covered
+        var message = option.dataset.currencyAnomaly === '1' ? 'Ce compte contient une écriture dans une autre devise. Faites vérifier son solde.' : covered
             ? 'Fonds disponibles pour couvrir cet ordre.'
             : (!compatible
                 ? 'Ce compte n’est pas compatible avec le mode de paiement sélectionné.'

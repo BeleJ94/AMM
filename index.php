@@ -199,6 +199,7 @@ switch ($controleur) {
             case 'demandes-kpi-excel':     $ctrl->excelDemandesKpi(); break;
             case 'demande-ajouter':        $ctrl->ajouterDemande(); break;
             case 'demande-voir':           $ctrl->voirDemande($param ?? $_GET['id'] ?? null); break;
+            case 'demande-pdf':            $ctrl->pdfDemande($param ?? $_GET['id'] ?? null); break;
             case 'demande-valider':        $ctrl->validerDemande($param ?? $_GET['id'] ?? null); break;
             case 'demande-annuler':        $ctrl->annulerDemande($param ?? $_GET['id'] ?? null); break;
             case 'ordres':                 $ctrl->ordres(); break;

@@ -91,6 +91,20 @@ try {
     smokeAssert((int)($receipt['financial_transaction_id'] ?? 0) > 0, 'Transaction revenu non creee.');
     $ids['transactions'][] = (int)$receipt['financial_transaction_id'];
 
+    // Alimenter aussi le compte bancaire utilisé pour le décaissement : aucun découvert implicite.
+    $bankReceiptId = $treasury->creerEncaissement([
+        'receipt_number' => 'REC-BANK-' . $token,
+        'date_receipt' => date('Y-m-d', strtotime('-1 day')),
+        'payer_name' => 'Alimentation banque smoke',
+        'objet' => 'Provision isolée du compte bancaire de test',
+        'amount' => 500.00, 'currency' => 'USD', 'payment_method' => 'banque',
+        'account_id' => $bankAccountId, 'created_by' => $userId,
+    ]);
+    $ids['receipts'][] = $bankReceiptId;
+    smokeAssert($treasury->validerEncaissement($bankReceiptId, $userId), 'Alimentation du compte bancaire échouée.');
+    $bankReceipt = $treasury->trouverEncaissementParId($bankReceiptId);
+    $ids['transactions'][] = (int)$bankReceipt['financial_transaction_id'];
+
     // 4. Creation demande de fonds
     $requestId = $treasury->creerDemandeFonds([
         'request_number' => 'DF-' . $token,

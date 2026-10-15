@@ -72,7 +72,7 @@ class Treasury {
         $stmt = $this->pdo->prepare(
             "SELECT COALESCE(SUM(amount_usd), 0)
              FROM treasury_payments
-             WHERE payment_date = ?"
+             WHERE payment_date = ? AND cancelled_at IS NULL"
         );
         $stmt->execute([$today]);
         $stats['decaissements_jour_usd'] = (float)$stmt->fetchColumn();
@@ -90,7 +90,7 @@ class Treasury {
         $stmt = $this->pdo->prepare(
             "SELECT COALESCE(SUM(amount_usd), 0)
              FROM treasury_payments
-             WHERE YEAR(payment_date) = ?
+             WHERE cancelled_at IS NULL AND YEAR(payment_date) = ?
                AND MONTH(payment_date) = ?"
         );
         $stmt->execute([$annee, $mois]);
@@ -98,7 +98,7 @@ class Treasury {
 
         $stats['demandes_en_attente'] = (int)$this->pdo->query(
             "SELECT COUNT(*) FROM treasury_fund_requests
-             WHERE status IN ('soumise','validee_comptable')"
+             WHERE status IN ('a_controler','soumise','validee_comptable','en_suspens')"
         )->fetchColumn();
 
         $stats['ordres_non_executes'] = (int)$this->pdo->query(
@@ -125,7 +125,7 @@ class Treasury {
         $stmt = $this->pdo->query(
             "SELECT
                 (SELECT COUNT(*) FROM treasury_fund_requests
-                 WHERE status IN ('soumise','validee_comptable','validee_direction')) AS demandes_action,
+                 WHERE status IN ('a_controler','soumise','validee_comptable','validee_direction','en_suspens')) AS demandes_action,
                 (SELECT COUNT(*) FROM treasury_payment_orders WHERE status = 'emis') AS ordres_action,
                 (SELECT COUNT(*) FROM treasury_bank_statements
                  WHERE status IN ('brouillon','en_rapprochement')) AS rapprochements_action,
@@ -521,18 +521,33 @@ class Treasury {
 
     public function creerDemandeFonds(array $donnees): int {
         $numero = $donnees['request_number'] ?? $this->genererNumeroDemande();
+        $lignes = null;
+        if (isset($donnees['items'])) {
+            $lignes = $this->normaliserLignesDemande($donnees['items']);
+            $donnees['amount'] = $lignes['total'];
+        }
+        $devise = (string)($donnees['currency'] ?? 'USD');
+        $montant = (float)($donnees['amount'] ?? 0);
+        $taux = isset($donnees['exchange_rate']) ? (float)$donnees['exchange_rate'] : null;
+        if (!is_finite($montant) || $montant <= 0 || $montant > 9999999999999.99
+            || !in_array($devise, ['USD', 'CDF'], true)
+            || ($devise === 'CDF' && (!$taux || !is_finite($taux) || $taux <= 0 || $taux > 99999999.9999))) {
+            throw new InvalidArgumentException('Le montant, la devise ou le taux de change est invalide.');
+        }
         $amountUsd = $this->convertirVersUsd(
-            (float)$donnees['amount'],
-            (string)$donnees['currency'],
-            isset($donnees['exchange_rate']) ? (float)$donnees['exchange_rate'] : null
+            $montant, $devise, $taux
         );
-
+        if (!is_finite($amountUsd) || $amountUsd > 9999999999999.99) {
+            throw new InvalidArgumentException('La contre-valeur USD dépasse la limite autorisée.');
+        }
+        $this->pdo->beginTransaction();
+        try {
         $stmt = $this->pdo->prepare(
             "INSERT INTO treasury_fund_requests
              (request_number, request_date, beneficiary, objet, description, amount, currency,
               exchange_rate, amount_usd, category_id, preferred_account_id, urgency,
-              justification_file, document_id, status, created_by, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'brouillon', ?, NOW())"
+              justification_file, document_id, status, created_by, department, requester_name, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'brouillon', ?, ?, ?, NOW())"
         );
 
         $stmt->execute([
@@ -551,15 +566,80 @@ class Treasury {
             $donnees['justification_file'] ?? null,
             !empty($donnees['document_id']) ? (int)$donnees['document_id'] : null,
             $donnees['created_by'] ?? null,
+            trim((string)($donnees['department'] ?? '')) ?: null,
+            trim((string)($donnees['requester_name'] ?? '')) ?: null,
         ]);
+        $id = (int)$this->pdo->lastInsertId();
+        if ($lignes !== null) {
+            $stmt = $this->pdo->prepare('INSERT INTO treasury_request_items (request_id, position, description, quantity, unit_price, line_total) VALUES (?, ?, ?, ?, ?, ?)');
+            foreach ($lignes['items'] as $position => $ligne) {
+                $stmt->execute([$id, $position + 1, $ligne['description'], $ligne['quantity'], $ligne['unit_price'], $ligne['line_total']]);
+            }
+        }
+        $this->pdo->commit();
+        return $id;
+        } catch (Throwable $e) {
+            if ($this->pdo->inTransaction()) { $this->pdo->rollBack(); }
+            throw $e;
+        }
+    }
 
-        return (int)$this->pdo->lastInsertId();
+    /** Recalculate every line and the total on the server, independently of posted totals. */
+    public function normaliserLignesDemande(array $lignes): array {
+        if (count($lignes) < 1 || count($lignes) > 100) {
+            throw new InvalidArgumentException('Ajouter entre 1 et 100 lignes de biens ou services.');
+        }
+        $items = [];
+        $total = 0.0;
+        foreach (array_values($lignes) as $index => $ligne) {
+            if (!is_array($ligne)) { throw new InvalidArgumentException('Ligne de demande invalide.'); }
+            if (isset($ligne['description']) && !is_scalar($ligne['description'])) {
+                throw new InvalidArgumentException('La désignation de la ligne doit être un texte.');
+            }
+            $description = trim((string)($ligne['description'] ?? ''));
+            $quantite = $ligne['quantity'] ?? null;
+            $prix = $ligne['unit_price'] ?? null;
+            if ($description === '' || mb_strlen($description) > 500 || !is_numeric($quantite) || !is_numeric($prix)) {
+                throw new InvalidArgumentException('Ligne ' . ($index + 1) . ' : renseigner une désignation, une quantité et un prix unitaire valides.');
+            }
+            $quantite = round((float)$quantite, 3);
+            $prix = round((float)$prix, 2);
+            if (!is_finite($quantite) || !is_finite($prix) || $quantite <= 0 || $quantite > 999999999
+                || $prix < 0 || $prix > 9999999999999.99) {
+                throw new InvalidArgumentException('Ligne ' . ($index + 1) . ' : quantité positive et prix positif ou nul requis.');
+            }
+            $montant = round($quantite * $prix, 2);
+            $total = round($total + $montant, 2);
+            if (!is_finite($total) || $total > 9999999999999.99) {
+                throw new InvalidArgumentException('Le total de la demande dépasse la limite autorisée.');
+            }
+            $items[] = ['description'=>$description, 'quantity'=>$quantite, 'unit_price'=>$prix, 'line_total'=>$montant];
+        }
+        if ($total <= 0) { throw new InvalidArgumentException('Le total de la demande doit être supérieur à zéro.'); }
+        return ['items'=>$items, 'total'=>$total];
+    }
+
+    public function itemsDemande(int $id): array {
+        $stmt = $this->pdo->prepare('SELECT * FROM treasury_request_items WHERE request_id = ? ORDER BY position, id');
+        $stmt->execute([$id]);
+        return $stmt->fetchAll();
+    }
+
+    public function peutConsulterDemande(array $demande, int $userId, string $role, string $service): bool {
+        if ($userId <= 0) { return false; }
+        if ($userId === (int)($demande['created_by'] ?? 0)) { return true; }
+        if (in_array($role, ['admin','tresorier','comptable_senior','directeur_financier','directeur_general','auditeur_interne'], true)) { return true; }
+        $serviceNormalise = $this->normaliserServiceDemande($service);
+        if (($role === 'direction' || $role === 'chef_service')
+            && preg_match('/finance|comptable|comptabilite|tresorerie|direction generale/', $serviceNormalise)) { return true; }
+        return $role === 'chef_service' && trim($service) !== '' && $service === ($demande['department'] ?? null);
     }
 
     public function soumettreDemande(int $id, int $userId): bool {
         $stmt = $this->pdo->prepare(
             "UPDATE treasury_fund_requests
-             SET status = 'soumise', submitted_by = ?, submitted_at = NOW()
+             SET status = CASE WHEN COALESCE(department, '') = '' THEN 'soumise' ELSE 'a_controler' END,
+                 submitted_by = ?, submitted_at = NOW()
              WHERE id = ? AND status = 'brouillon'"
         );
         $stmt->execute([$userId, $id]);
@@ -567,52 +647,93 @@ class Treasury {
     }
 
     public function validerDemande(int $id, string $niveau, int $userId, string $commentaire = ''): bool {
-        if (!in_array($niveau, ['comptable', 'direction_financiere', 'direction_generale'], true)) {
-            return false;
-        }
+        return $this->deciderDemande($id, $niveau, $userId, 'valide', $commentaire);
+    }
 
-        $demande = $this->trouverDemandeParId($id);
-        if (!$demande || in_array($demande['status'], ['rejetee', 'ordre_emis', 'payee', 'annulee'], true)) {
-            return false;
-        }
-
-        if (!$this->niveauValidationPossible($demande, $niveau)) {
-            return false;
-        }
-
+    public function controlerDemande(int $id, int $userId, string $commentaire = ''): bool {
+        if ($userId <= 0) { return false; }
         try {
             $this->pdo->beginTransaction();
-
-            $stmt = $this->pdo->prepare(
-                "INSERT INTO treasury_request_approvals
-                 (request_id, approval_level, decision, approval_comment, approved_by, approved_at)
-                 VALUES (?, ?, 'valide', ?, ?, NOW())"
-            );
-            $stmt->execute([$id, $niveau, $commentaire ?: null, $userId]);
-
-            $statut = $this->statutApresValidation($id, $demande, $niveau);
-            $stmt = $this->pdo->prepare("UPDATE treasury_fund_requests SET status = ? WHERE id = ?");
-            $stmt->execute([$statut, $id]);
-
+            $demande = $this->verrouillerDemande($id);
+            if (!$demande || $demande['status'] !== 'a_controler') { $this->pdo->rollBack(); return false; }
+            $stmt = $this->pdo->prepare("UPDATE treasury_fund_requests SET status='soumise', controlled_by=?, controlled_at=NOW(), submitted_by=?, submitted_at=NOW() WHERE id=?");
+            $stmt->execute([$userId, $userId, $id]);
+            $this->enregistrerDecisionDemande($id, 'tresorier', $userId, 'valide', $commentaire);
             $this->pdo->commit();
             return true;
         } catch (Throwable $e) {
-            if ($this->pdo->inTransaction()) {
-                $this->pdo->rollBack();
+            if ($this->pdo->inTransaction()) { $this->pdo->rollBack(); }
+            error_log('Erreur controlerDemande: ' . $e->getMessage()); return false;
+        }
+    }
+
+    public function deciderDemande(int $id, string $niveau, int $userId, string $decision, string $commentaire = '', ?float $approvedAmount = null, ?string $reminderDate = null): bool {
+        $commentaire = trim($commentaire);
+        if ($userId <= 0 || !in_array($decision, ['annule','en_suspens','valide'], true)
+            || !in_array($niveau, ['comptable','direction_financiere','direction_generale'], true)) { return false; }
+        if ($decision !== 'valide' && $commentaire === '') { return false; }
+        if ($decision === 'en_suspens' && !$this->dateRappelValide($reminderDate)) { return false; }
+        try {
+            $this->pdo->beginTransaction();
+            $demande = $this->verrouillerDemande($id);
+            if (!$demande || !$this->niveauValidationPossible($demande, $niveau)
+                || !$this->separationDemandeRespectee($demande, $userId)) { $this->pdo->rollBack(); return false; }
+            $plafond = (float)($demande['approved_amount'] ?? $demande['amount']);
+            if ($decision === 'valide') {
+                $montant = round($approvedAmount ?? $plafond, 2);
+                if (!is_finite($montant) || $montant <= 0 || $montant > $plafond + 0.00001
+                    || ($montant < $plafond && $commentaire === '')) { $this->pdo->rollBack(); return false; }
+                $usd = round($this->convertirVersUsd($montant, $demande['currency'], $demande['exchange_rate'] !== null ? (float)$demande['exchange_rate'] : null), 2);
+                $this->enregistrerDecisionDemande($id, $niveau, $userId, $decision, $commentaire, $montant, $usd);
+                $statut = $this->statutApresValidation($id, $demande, $niveau);
+                $stmt = $this->pdo->prepare('UPDATE treasury_fund_requests SET status=?, approved_amount=?, approved_amount_usd=?, suspended_level=NULL, previous_status=NULL, reminder_date=NULL WHERE id=?');
+                $stmt->execute([$statut, $montant, $usd, $id]);
+            } elseif ($decision === 'en_suspens') {
+                $this->enregistrerDecisionDemande($id, $niveau, $userId, $decision, $commentaire, null, null, $reminderDate);
+                $stmt = $this->pdo->prepare("UPDATE treasury_fund_requests SET previous_status=status, status='en_suspens', suspended_level=?, reminder_date=? WHERE id=?");
+                $stmt->execute([$niveau, $reminderDate, $id]);
+            } else {
+                $this->enregistrerDecisionDemande($id, $niveau, $userId, $decision, $commentaire);
+                $stmt = $this->pdo->prepare("UPDATE treasury_fund_requests SET status='annulee', cancellation_reason=?, cancelled_by=?, cancelled_at=NOW(), suspended_level=NULL, previous_status=NULL, reminder_date=NULL WHERE id=?");
+                $stmt->execute([$commentaire, $userId, $id]);
             }
-            error_log('Erreur validerDemande: ' . $e->getMessage());
-            return false;
+            $this->pdo->commit(); return true;
+        } catch (Throwable $e) {
+            if ($this->pdo->inTransaction()) { $this->pdo->rollBack(); }
+            error_log('Erreur deciderDemande: ' . $e->getMessage()); return false;
+        }
+    }
+
+    public function reprendreDemande(int $id, string $niveau, int $userId, string $commentaire = ''): bool {
+        if ($userId <= 0 || !in_array($niveau, ['comptable','direction_financiere','direction_generale'], true)) { return false; }
+        try {
+            $this->pdo->beginTransaction();
+            $demande = $this->verrouillerDemande($id);
+            if (!$demande || $demande['status'] !== 'en_suspens' || $demande['suspended_level'] !== $niveau
+                || !$this->separationDemandeRespectee($demande, $userId)) { $this->pdo->rollBack(); return false; }
+            $demande['status'] = $demande['previous_status'];
+            if (!$this->niveauValidationPossible($demande, $niveau)) { $this->pdo->rollBack(); return false; }
+            $stmt = $this->pdo->prepare('UPDATE treasury_fund_requests SET status=previous_status, previous_status=NULL, suspended_level=NULL, reminder_date=NULL WHERE id=?');
+            $stmt->execute([$id]);
+            $this->enregistrerDecisionDemande($id, $niveau, $userId, 'repris', trim($commentaire));
+            $this->pdo->commit(); return true;
+        } catch (Throwable $e) {
+            if ($this->pdo->inTransaction()) { $this->pdo->rollBack(); }
+            error_log('Erreur reprendreDemande: ' . $e->getMessage()); return false;
         }
     }
 
     public function rejeterDemande(int $id, string $niveau, int $userId, string $motif): bool {
-        if ($motif === '' || !in_array($niveau, ['comptable', 'direction_financiere', 'direction_generale'], true)) {
+        $motif = trim($motif);
+        if ($userId <= 0 || $motif === '' || !in_array($niveau, ['comptable', 'direction_financiere', 'direction_generale'], true)) {
             return false;
         }
 
         try {
             $this->pdo->beginTransaction();
-
+            $demande = $this->verrouillerDemande($id);
+            if (!$demande || !$this->niveauValidationPossible($demande, $niveau)
+                || !$this->separationDemandeRespectee($demande, $userId)) { $this->pdo->rollBack(); return false; }
             $stmt = $this->pdo->prepare(
                 "INSERT INTO treasury_request_approvals
                  (request_id, approval_level, decision, approval_comment, approved_by, approved_at)
@@ -646,12 +767,57 @@ class Treasury {
 
         $stmt = $this->pdo->prepare(
             "UPDATE treasury_fund_requests
-             SET status = 'annulee', cancellation_reason = ?, cancelled_by = ?, cancelled_at = NOW()
+             SET status = 'annulee', cancellation_reason = ?, cancelled_by = ?, cancelled_at = NOW(),
+                 suspended_level = NULL, previous_status = NULL, reminder_date = NULL
              WHERE id = ?
-               AND status IN ('brouillon','soumise','validee_comptable','validee_direction','rejetee')"
+               AND status IN ('brouillon','a_controler','soumise','validee_comptable','validee_direction','rejetee','en_suspens')"
         );
         $stmt->execute([$motif, $userId, $id]);
         return $stmt->rowCount() > 0;
+    }
+
+    /** Due reminders are in-app notifications, deduplicated per recipient, level and day. */
+    public function envoyerRappelsDemandes(?int $requestId = null): int {
+        $stmt = $this->pdo->prepare("SELECT id FROM treasury_fund_requests WHERE status='en_suspens' AND reminder_date IS NOT NULL AND reminder_date <= CURDATE()" . ($requestId !== null ? ' AND id=?' : ''));
+        $stmt->execute($requestId !== null ? [$requestId] : []);
+        $ids = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        if (!$ids) { return 0; }
+        $users = $this->pdo->query('SELECT id, role, service FROM users WHERE actif=1')->fetchAll();
+        $sent = 0;
+        foreach ($ids as $id) {
+            try {
+                $this->pdo->beginTransaction();
+                $demande = $this->verrouillerDemande((int)$id);
+                if (!$demande || $demande['status'] !== 'en_suspens' || !$demande['reminder_date'] || $demande['reminder_date'] > date('Y-m-d')) {
+                    $this->pdo->rollBack(); continue;
+                }
+                $niveau = (string)$demande['suspended_level'];
+                $destinataires = [];
+                foreach ($users as $user) {
+                    $userId = (int)$user['id'];
+                    if ($userId === (int)$demande['created_by']
+                        || ($this->utilisateurValideNiveauDemande($user, $niveau) && $this->separationDemandeRespectee($demande, $userId))) {
+                        $destinataires[$userId] = $userId;
+                    }
+                }
+                $insert = $this->pdo->prepare('INSERT IGNORE INTO treasury_request_reminders (request_id, approval_level, reminder_day, user_id) VALUES (?, ?, CURDATE(), ?)');
+                $notification = $this->pdo->prepare("INSERT INTO notifications (user_id, type_notif, message, lien, created_at) VALUES (?, 'rappel', ?, ?, NOW())");
+                $count = 0;
+                foreach ($destinataires as $userId) {
+                    $insert->execute([(int)$id, $niveau, $userId]);
+                    if ($insert->rowCount() === 0) { continue; }
+                    $message = 'Rappel : la demande ' . $demande['request_number'] . ' est en suspens et attend une reprise de traitement.';
+                    $notification->execute([$userId, $message, APP_URL . '/treasury/demande-voir/' . (int)$id]);
+                    $count++;
+                }
+                $this->pdo->commit();
+                $sent += $count;
+            } catch (Throwable $e) {
+                if ($this->pdo->inTransaction()) { $this->pdo->rollBack(); }
+                error_log('Erreur rappel demande: ' . $e->getMessage());
+            }
+        }
+        return $sent;
     }
 
     public function genererNumeroDemande(): string {
@@ -704,6 +870,7 @@ class Treasury {
                     p.id AS payment_id, p.payment_date, p.reference_payment AS executed_reference_payment,
                     p.proof_file AS payment_proof_file, p.financial_transaction_id,
                     p.notes AS payment_notes, p.executed_by, p.executed_at,
+                    p.cancelled_at AS payment_cancelled_at, p.cancellation_reason AS payment_cancellation_reason,
                     ux.nom AS executed_by_nom
              FROM treasury_payment_orders o
              JOIN treasury_fund_requests r ON r.id = o.request_id
@@ -726,6 +893,7 @@ class Treasury {
                     p.id AS payment_id, p.payment_date, p.reference_payment AS executed_reference_payment,
                     p.proof_file AS payment_proof_file, p.financial_transaction_id,
                     p.notes AS payment_notes, p.executed_by, p.executed_at,
+                    p.cancelled_at AS payment_cancelled_at, p.cancellation_reason AS payment_cancellation_reason,
                     ux.nom AS executed_by_nom
              FROM treasury_payment_orders o
              JOIN treasury_fund_requests r ON r.id = o.request_id
@@ -759,7 +927,7 @@ class Treasury {
             $this->pdo->beginTransaction();
 
             $stmt = $this->pdo->prepare(
-                "SELECT id, status
+                "SELECT *
                  FROM treasury_fund_requests
                  WHERE id = ?
                  FOR UPDATE"
@@ -770,6 +938,18 @@ class Treasury {
                 $this->pdo->rollBack();
                 return 0;
             }
+            $montantAutorise = (float)($demandeVerrouillee['approved_amount'] ?? $demandeVerrouillee['amount']);
+            $montant = round((float)($donnees['amount'] ?? $montantAutorise), 2);
+            $devise = (string)($donnees['currency'] ?? $demandeVerrouillee['currency']);
+            // The approval is expressed in the request's currency. Never accept a posted USD equivalent.
+            if ($devise !== $demandeVerrouillee['currency'] || !is_finite($montant) || $montant <= 0 || $montant > $montantAutorise + 0.00001) {
+                $this->pdo->rollBack(); return 0;
+            }
+            if (!$this->compteCouvrePaiement($accountId, $devise, $montant, (string)($donnees['payment_method'] ?? ''))) {
+                $this->pdo->rollBack(); return 0;
+            }
+            $taux = $demandeVerrouillee['exchange_rate'] !== null ? (float)$demandeVerrouillee['exchange_rate'] : null;
+            $montantUsd = round($this->convertirVersUsd($montant, $devise, $taux), 2);
 
             $stmt = $this->pdo->prepare(
                 "SELECT id
@@ -796,10 +976,10 @@ class Treasury {
                 $donnees['order_number'] ?? $this->genererNumeroOrdrePaiement(),
                 $requestId,
                 $donnees['order_date'] ?? date('Y-m-d'),
-                $donnees['amount'] ?? $demande['amount'],
-                $donnees['currency'] ?? $demande['currency'],
-                !empty($donnees['exchange_rate']) ? $donnees['exchange_rate'] : $demande['exchange_rate'],
-                $donnees['amount_usd'] ?? $demande['amount_usd'],
+                $montant,
+                $devise,
+                $taux,
+                $montantUsd,
                 $donnees['payment_method'],
                 $accountId,
                 $donnees['beneficiary'] ?? $demande['beneficiary'],
@@ -835,7 +1015,9 @@ class Treasury {
             $this->pdo->beginTransaction();
 
             $stmt = $this->pdo->prepare(
-                "SELECT o.id, o.status, o.request_id, r.status AS request_status
+                "SELECT o.*, r.status AS request_status, r.amount AS requested_amount,
+                        r.approved_amount AS request_approved_amount, r.currency AS request_currency,
+                        r.category_id, r.objet
                  FROM treasury_payment_orders o
                  JOIN treasury_fund_requests r ON r.id = o.request_id
                  WHERE o.id = ?
@@ -846,6 +1028,13 @@ class Treasury {
             if (!$ordreVerrouille || $ordreVerrouille['status'] !== 'emis' || $ordreVerrouille['request_status'] !== 'ordre_emis') {
                 $this->pdo->rollBack();
                 return 0;
+            }
+            $ordre = array_replace($ordre, $ordreVerrouille);
+            $plafond = (float)($ordre['request_approved_amount'] ?? $ordre['requested_amount']);
+            if ($ordre['currency'] !== $ordre['request_currency'] || (float)$ordre['amount'] <= 0
+                || (float)$ordre['amount'] > $plafond + 0.00001
+                || !$this->compteCouvrePaiement((int)$ordre['account_id'], $ordre['currency'], (float)$ordre['amount'], $ordre['payment_method'], $orderId)) {
+                $this->pdo->rollBack(); return 0;
             }
 
             $stmt = $this->pdo->prepare(
@@ -1085,6 +1274,7 @@ class Treasury {
              FROM treasury_payments p
              JOIN treasury_payment_orders o ON o.id = p.payment_order_id
              WHERE o.payment_method = 'especes'
+               AND p.cancelled_at IS NULL
                AND o.account_id = ?
                AND p.payment_date = ?"
         );
@@ -1127,6 +1317,7 @@ class Treasury {
                  JOIN treasury_payment_orders o ON o.id = p.payment_order_id
                  JOIN treasury_fund_requests fr ON fr.id = o.request_id
                  WHERE o.payment_method = 'especes'
+                   AND p.cancelled_at IS NULL
                    AND o.account_id = ?
                    AND p.payment_date BETWEEN ? AND ?)
                 ORDER BY operation_date ASC, created_at ASC, id ASC";
@@ -1574,7 +1765,7 @@ class Treasury {
                 JOIN treasury_payment_orders po ON po.id = p.payment_order_id
                 JOIN treasury_fund_requests fr ON fr.id = po.request_id
                 JOIN financial_accounts a ON a.id = po.account_id
-                WHERE 1=1";
+                WHERE p.cancelled_at IS NULL";
         $params = [];
 
         if (!empty($filtres['account_id'])) {
@@ -1640,7 +1831,7 @@ class Treasury {
             $params[] = $filtres['date_fin'];
         }
 
-        $sql .= " GROUP BY status ORDER BY FIELD(status, 'brouillon','soumise','validee_comptable','validee_direction','rejetee','ordre_emis','payee','annulee')";
+        $sql .= " GROUP BY status ORDER BY FIELD(status, 'brouillon','a_controler','soumise','en_suspens','validee_comptable','validee_direction','rejetee','ordre_emis','payee','annulee')";
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute($params);
         $rows = $stmt->fetchAll();
@@ -1770,6 +1961,10 @@ class Treasury {
             $sql .= " AND r.created_by = ?";
             $params[] = (int)$filtres['created_by'];
         }
+        if (!empty($filtres['department'])) {
+            $sql .= " AND r.department = ?";
+            $params[] = (string)$filtres['department'];
+        }
         if (!empty($filtres['date_debut'])) {
             $sql .= " AND r.request_date >= ?";
             $params[] = $filtres['date_debut'];
@@ -1779,10 +1974,76 @@ class Treasury {
             $params[] = $filtres['date_fin'];
         }
         if (!empty($filtres['recherche'])) {
-            $sql .= " AND (r.request_number LIKE ? OR r.beneficiary LIKE ? OR r.objet LIKE ? OR r.description LIKE ?)";
+            $sql .= " AND (r.request_number LIKE ? OR r.beneficiary LIKE ? OR r.objet LIKE ? OR r.description LIKE ? OR r.department LIKE ? OR r.requester_name LIKE ?)";
             $term = '%' . $filtres['recherche'] . '%';
-            $params = array_merge($params, [$term, $term, $term, $term]);
+            $params = array_merge($params, [$term, $term, $term, $term, $term, $term]);
         }
+    }
+
+    private function verrouillerDemande(int $id) {
+        $stmt = $this->pdo->prepare('SELECT * FROM treasury_fund_requests WHERE id=? FOR UPDATE');
+        $stmt->execute([$id]); return $stmt->fetch();
+    }
+
+    /** Serialize treasury commitments for this account and compare native monetary units. */
+    private function compteCouvrePaiement(int $accountId, string $currency, float $amount, string $paymentMethod, int $excludingOrderId = 0): bool {
+        $stmt = $this->pdo->prepare('SELECT devise, actif, type_compte FROM financial_accounts WHERE id=? FOR UPDATE');
+        $stmt->execute([$accountId]);
+        $account = $stmt->fetch();
+        $expectedType = ['especes'=>'caisse','banque'=>'banque','mobile_money'=>'mobile_money'][$paymentMethod] ?? null;
+        if (!$account || !(int)$account['actif'] || $account['devise'] !== $currency || $expectedType !== $account['type_compte']) { return false; }
+        // Lock drafts as well: a concurrent validation must not change the balance between check and posting.
+        $stmt = $this->pdo->prepare('SELECT type_flux, montant, devise, statut FROM financial_transactions WHERE compte_id=? FOR UPDATE');
+        $stmt->execute([$accountId]);
+        $balance = 0.0;
+        $mixedCurrency = false;
+        foreach ($stmt->fetchAll() as $transaction) {
+            if ($transaction['statut'] !== 'valide') { continue; }
+            if ($transaction['devise'] !== $currency) { $mixedCurrency = true; }
+            if ($transaction['type_flux'] === 'revenu') { $balance += (float)$transaction['montant']; }
+            elseif ($transaction['type_flux'] === 'depense') { $balance -= (float)$transaction['montant']; }
+        }
+        // An account containing historical mixed-currency postings must be reconciled first.
+        if ($mixedCurrency) { return false; }
+        $stmt = $this->pdo->prepare("SELECT COALESCE(SUM(amount),0) AS reserved,
+                COALESCE(SUM(currency <> ?),0) AS mixed_currency
+             FROM treasury_payment_orders WHERE account_id=? AND status='emis' AND id<>?");
+        $stmt->execute([$currency, $accountId, $excludingOrderId]);
+        $pending = $stmt->fetch();
+        return (int)$pending['mixed_currency'] === 0 && $balance - (float)$pending['reserved'] + 0.00001 >= $amount;
+    }
+
+    private function enregistrerDecisionDemande(int $id, string $niveau, int $userId, string $decision, string $commentaire, ?float $montant = null, ?float $usd = null, ?string $rappel = null): void {
+        $stmt = $this->pdo->prepare('INSERT INTO treasury_request_approvals (request_id, approval_level, decision, approval_comment, approved_by, approved_amount, approved_amount_usd, reminder_date, approved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())');
+        $stmt->execute([$id, $niveau, $decision, $commentaire ?: null, $userId, $montant, $usd, $rappel]);
+    }
+
+    private function separationDemandeRespectee(array $demande, int $userId): bool {
+        // Legacy requests keep their pre-existing API behavior; new departmental requests enforce separation.
+        return empty($demande['department']) || ($userId !== (int)$demande['created_by'] && $userId !== (int)$demande['submitted_by']);
+    }
+
+    private function dateRappelValide(?string $date): bool {
+        if (!$date || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) { return false; }
+        [$annee, $mois, $jour] = array_map('intval', explode('-', $date));
+        return checkdate($mois, $jour, $annee) && $date >= date('Y-m-d');
+    }
+
+    private function normaliserServiceDemande(string $service): string {
+        return strtr(mb_strtolower(trim($service), 'UTF-8'), ['é'=>'e','è'=>'e','ê'=>'e','ë'=>'e','à'=>'a','â'=>'a','ù'=>'u','û'=>'u','î'=>'i','ï'=>'i','ô'=>'o','ç'=>'c']);
+    }
+
+    private function utilisateurValideNiveauDemande(array $user, string $niveau): bool {
+        $role = (string)$user['role'];
+        $service = $this->normaliserServiceDemande((string)$user['service']);
+        if ($role === 'admin') { return true; }
+        if ($niveau === 'comptable') {
+            return $role === 'comptable_senior' || ($role === 'chef_service' && (bool)preg_match('/finance|comptable|comptabilite/', $service));
+        }
+        if ($niveau === 'direction_financiere') {
+            return $role === 'directeur_financier' || ($role === 'direction' && (bool)preg_match('/finance|direction financiere|direction des finances/', $service));
+        }
+        return $niveau === 'direction_generale' && ($role === 'directeur_general' || ($role === 'direction' && strpos($service, 'generale') !== false));
     }
 
     private function niveauValidationPossible(array $demande, string $niveau): bool {

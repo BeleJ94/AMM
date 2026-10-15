@@ -233,7 +233,7 @@ document.addEventListener('DOMContentLoaded', function () {
                         <?php if (!empty($encaissement['financial_transaction_id'])): ?>
                             <tr>
                                 <th>Écriture financière</th>
-                                <td>Transaction #<?= (int)$encaissement['financial_transaction_id'] ?></td>
+                                <td><a href="<?= APP_URL ?>/finance/transactions?transaction_id=<?= (int)$encaissement['financial_transaction_id'] ?>&amp;annee=0&amp;mois=0">Transaction #<?= (int)$encaissement['financial_transaction_id'] ?> · Consulter</a></td>
                             </tr>
                         <?php endif; ?>
                         <?php if ($encaissement['status'] === 'annule'): ?>
