@@ -86,11 +86,28 @@ $exportName = 'rapport_tresorerie_' . preg_replace('/[^a-z0-9_]+/i', '_', $type)
 
     <?php afficherFlash(); ?>
 
-    <div class="card filter-card mb-4 no-print">
-        <div class="card-body">
-            <form method="GET" action="<?= APP_URL ?>/treasury/rapports">
+
+
+    <div class="card section-card">
+        <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
+            <div>
+                <div class="fw-semibold"><i class="bi bi-table me-2"></i><?= e($rapport['titre'] ?? ($typesRapports[$type] ?? 'Rapport')) ?></div>
+                <div class="small text-muted">
+                    Genere le <?= e(date('d/m/Y H:i')) ?> - <?= count($rapport['lignes'] ?? []) ?> ligne(s)
+                </div>
+            </div>
+            <div class="d-flex gap-2 no-print">
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="exporterCSV('<?= e($tableId) ?>', '<?= e($exportName) ?>')">
+                    <i class="bi bi-download me-1"></i>CSV
+                </button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="window.print()">
+                    <i class="bi bi-printer me-1"></i>PDF
+                </button>
+            </div>
+        </div>
+        <form data-register-filters method="GET" action="<?= APP_URL ?>/treasury/rapports">
                 <div class="row g-2 align-items-end">
-                    <div class="col-lg-3 col-md-6">
+                    <div class="col-lg-3 col-md-6" data-register-basic>
                         <label class="form-label small fw-semibold">Rapport</label>
                         <select class="form-select form-select-sm" name="type">
                             <?php foreach ($typesRapports as $key => $label): ?>
@@ -158,32 +175,12 @@ $exportName = 'rapport_tresorerie_' . preg_replace('/[^a-z0-9_]+/i', '_', $type)
                     </div>
                 </div>
             </form>
-        </div>
-    </div>
-
-    <div class="card section-card">
-        <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
-            <div>
-                <div class="fw-semibold"><i class="bi bi-table me-2"></i><?= e($rapport['titre'] ?? ($typesRapports[$type] ?? 'Rapport')) ?></div>
-                <div class="small text-muted">
-                    Genere le <?= e(date('d/m/Y H:i')) ?> - <?= count($rapport['lignes'] ?? []) ?> ligne(s)
-                </div>
-            </div>
-            <div class="d-flex gap-2 no-print">
-                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="exporterCSV('<?= e($tableId) ?>', '<?= e($exportName) ?>')">
-                    <i class="bi bi-download me-1"></i>CSV
-                </button>
-                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="window.print()">
-                    <i class="bi bi-printer me-1"></i>PDF
-                </button>
-            </div>
-        </div>
         <div class="card-body p-0">
             <?php if (empty($rapport['lignes'])): ?>
                 <?php treasuryUiEmptyState('bi-inboxes', 'Aucune donnée pour ce rapport', 'Ajustez la période, le compte ou les statuts puis régénérez le rapport.'); ?>
             <?php else: ?>
                 <div class="table-responsive">
-                    <table class="table table-hover table-sm mb-0" id="<?= e($tableId) ?>">
+                    <table class="table table-hover table-sm mb-0" id="<?= e($tableId) ?>" data-register-table data-register-order='[]'>
                         <thead class="table-dark">
                             <tr>
                                 <?php foreach ($rapport['colonnes'] as $colonne): ?>

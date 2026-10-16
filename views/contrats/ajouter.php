@@ -149,10 +149,7 @@ $pageTitle = ($estModification ? 'Modifier' : 'Nouveau') . ' contrat — ' . APP
                         <span class="badge bg-success ms-1"><?= count($paiements) ?></span>
                     </div>
                     <div class="card-body p-0">
-                        <?php if (empty($paiements)): ?>
-                            <div class="text-center p-3 text-muted">Aucun paiement enregistré.</div>
-                        <?php else: ?>
-                            <table class="table table-hover mb-0">
+                            <table id="tableContratPaiements" class="table table-sm table-hover align-middle compact mb-0" data-register-table>
                                 <thead class="table-light">
                                     <tr><th>Date</th><th>Montant</th><th>Commentaire</th><th>Preuve</th></tr>
                                 </thead>
@@ -185,7 +182,6 @@ $pageTitle = ($estModification ? 'Modifier' : 'Nouveau') . ' contrat — ' . APP
                                     </tr>
                                 </tfoot>
                             </table>
-                        <?php endif; ?>
                     </div>
                     <!-- Formulaire ajout paiement -->
                     <div class="card-footer">

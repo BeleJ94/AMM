@@ -29,9 +29,23 @@ class CourrierController {
             'date_fin'  => $_GET['date_fin']  ?? '',
         ];
 
-        $total    = $this->courrierModel->compter($filtres);
-        $pagination = paginer($total, 20, $page);
-        $courriers  = $this->courrierModel->lister($filtres, 20, $pagination['offset']);
+        $total = $this->courrierModel->compter($filtres);
+        if (isset($_GET['draw'])) {
+            $length = (int)($_GET['length'] ?? 15);
+            if (!in_array($length, [15, 25, 50, 100], true)) $length = 15;
+            $offset = max(0, (int)($_GET['start'] ?? 0));
+            $columns = ['numero_unique', 'reference_document', 'expediteur', 'objet', 'urgence', 'statut', 'date_reception', 'deadline', 'service_destinataire'];
+            $sort = $columns[(int)($_GET['order'][0]['column'] ?? -1)] ?? 'created_at';
+            $direction = ($_GET['order'][0]['dir'] ?? 'desc') === 'asc' ? 'ASC' : 'DESC';
+            $courriers = $this->courrierModel->lister($filtres, $length, $offset, $sort, $direction);
+            ob_start();
+            require __DIR__ . '/../views/courrier/_registre_rows.php';
+            $html = ob_get_clean();
+            jsonReponse(['draw' => (int)$_GET['draw'], 'recordsTotal' => $this->courrierModel->compter(), 'recordsFiltered' => $total, 'html' => $html]);
+            return;
+        }
+        $services = getDB()->query("SELECT DISTINCT service_destinataire FROM courriers WHERE service_destinataire IS NOT NULL AND service_destinataire <> '' ORDER BY service_destinataire")->fetchAll(PDO::FETCH_COLUMN);
+        $courriers = [];
 
         require_once __DIR__ . '/../views/courrier/liste.php';
     }

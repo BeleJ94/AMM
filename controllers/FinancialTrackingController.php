@@ -46,8 +46,9 @@ class FinancialTrackingController {
         ];
 
         $total = $this->financeModel->compterTransactions($filtres);
-        $pagination = paginer($total, 25, $page);
-        $transactions = $this->financeModel->listerTransactions($filtres, 25, $pagination['offset']);
+        $parPage = in_array((int)($_GET['per_page'] ?? 15), [15, 25, 50, 100], true) ? (int)($_GET['per_page'] ?? 15) : 15;
+        $pagination = paginer($total, $parPage, $page);
+        $transactions = $this->financeModel->listerTransactions($filtres, $parPage, $pagination['offset']);
         $peutAnnulerTransaction = $this->peutAnnulerTransaction();
 
         require_once __DIR__ . '/../views/finance/transactions.php';
@@ -257,8 +258,9 @@ class FinancialTrackingController {
         ];
 
         $total = $this->financeModel->compterFactures($filtres);
-        $pagination = paginer($total, 25, $page);
-        $factures = $this->financeModel->listerFactures($filtres, 25, $pagination['offset']);
+        $parPage = in_array((int)($_GET['per_page'] ?? 15), [15, 25, 50, 100], true) ? (int)($_GET['per_page'] ?? 15) : 15;
+        $pagination = paginer($total, $parPage, $page);
+        $factures = $this->financeModel->listerFactures($filtres, $parPage, $pagination['offset']);
 
         require_once __DIR__ . '/../views/finance/factures.php';
     }

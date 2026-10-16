@@ -100,7 +100,7 @@
                 </div>
                 <div class="card-body p-0">
                     <div class="table-responsive">
-                        <table class="table table-hover mb-0">
+                        <table data-register-table data-register-filter-columns='{"3":"Devise"}' class="table table-sm table-hover mb-0">
                             <thead class="table-light">
                                 <tr>
                                     <th>Catégorie</th>

@@ -24,6 +24,7 @@ require_once __DIR__ . '/includes/functions.php';
 // Charger tous les modèles
 require_once __DIR__ . '/models/User.php';
 require_once __DIR__ . '/models/Department.php';
+require_once __DIR__ . '/models/AuditLog.php';
 require_once __DIR__ . '/models/Courrier.php';
 require_once __DIR__ . '/models/Document.php';
 require_once __DIR__ . '/models/Contrat.php';
@@ -37,6 +38,7 @@ require_once __DIR__ . '/controllers/AuthController.php';
 require_once __DIR__ . '/controllers/DashboardController.php';
 require_once __DIR__ . '/controllers/UserController.php';
 require_once __DIR__ . '/controllers/DepartmentController.php';
+require_once __DIR__ . '/controllers/AuditLogController.php';
 require_once __DIR__ . '/controllers/CourrierController.php';
 require_once __DIR__ . '/controllers/DocumentController.php';
 require_once __DIR__ . '/controllers/ContratController.php';
@@ -152,6 +154,12 @@ switch ($controleur) {
         verifierSession();
         verifierRole(['admin']);
         (new DepartmentController())->index();
+        break;
+
+    case 'admin-logs':
+        verifierSession();
+        verifierRole(['admin']);
+        (new AuditLogController())->index();
         break;
 
     case 'admin-finance':

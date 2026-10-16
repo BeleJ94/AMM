@@ -130,43 +130,19 @@ foreach ($lignes as $ligne) {
                         </button>
                     </span>
                 </div>
-                <div class="card-body border-bottom no-print">
-                    <div class="row g-2 align-items-end" data-movement-controls="bankStatementLinesTable">
-                        <div class="col-md-3">
-                            <label class="form-label small fw-semibold">Date début</label>
-                            <input type="date" class="form-control form-control-sm" data-filter-start>
+                <form data-register-filters data-register-client="true" data-register-movement="bankStatementLinesTable" class="no-print">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-md-3"><label class="form-label small fw-semibold" for="bankStatementLinesTableStart">Date début</label><input id="bankStatementLinesTableStart" type="date" name="movement_start" class="form-control form-control-sm" data-filter-start></div>
+                            <div class="col-md-3"><label class="form-label small fw-semibold" for="bankStatementLinesTableEnd">Date fin</label><input id="bankStatementLinesTableEnd" type="date" name="movement_end" class="form-control form-control-sm" data-filter-end></div>
+                            <div class="col-md-2"><button type="reset" class="btn btn-outline-secondary btn-sm" title="Réinitialiser les dates"><i class="bi bi-arrow-counterclockwise me-1"></i>Réinitialiser</button></div>
                         </div>
-                        <div class="col-md-3">
-                            <label class="form-label small fw-semibold">Date fin</label>
-                            <input type="date" class="form-control form-control-sm" data-filter-end>
-                        </div>
-                        <div class="col-md-2">
-                            <label class="form-label small fw-semibold">Tri</label>
-                            <select class="form-select form-select-sm" data-sort-order>
-                                <option value="asc">Croissant</option>
-                                <option value="desc">Décroissant</option>
-                            </select>
-                        </div>
-                        <div class="col-md-2">
-                            <label class="form-label small fw-semibold">Affichage</label>
-                            <select class="form-select form-select-sm" data-display-mode>
-                                <option value="continuous">Continu</option>
-                                <option value="paginated">Pagination</option>
-                            </select>
-                        </div>
-                        <div class="col-md-2 d-flex gap-1">
-                            <button type="button" class="btn btn-outline-secondary btn-sm w-100" data-reset-filters>
-                                <i class="bi bi-arrow-counterclockwise me-1"></i>Reset
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                    </form>
                 <div class="card-body p-0">
                     <?php if (empty($lignesAvecSolde)): ?>
                         <?php treasuryUiEmptyState('bi-inboxes', 'Aucune ligne saisie', 'Ajoutez les mouvements du relevé bancaire pour commencer le rapprochement.'); ?>
                     <?php else: ?>
                         <div class="table-responsive">
-                            <table class="table table-sm table-hover mb-0 treasury-compact-table" id="bankStatementLinesTable">
+                            <table class="table table-sm table-hover mb-0 treasury-compact-table" id="bankStatementLinesTable" data-register-table data-register-options='{"order":[[1,"asc"]],"columnDefs":[{"orderable":false,"targets":[0,7]}]}'>
                                 <thead class="table-dark">
                                     <tr>
                                         <th class="no-print" data-export-skip="1"></th>
@@ -190,7 +166,7 @@ foreach ($lignes as $ligne) {
                                                     <i class="bi bi-chevron-down"></i>
                                                 </button>
                                             </td>
-                                            <td><?= formatDate($ligne['operation_date']) ?></td>
+                                            <td data-order="<?= e($ligne['operation_date']) ?>"><?= formatDate($ligne['operation_date']) ?></td>
                                             <td class="fw-semibold"><?= e($ligne['reference_operation'] ?? '—') ?></td>
                                             <td class="text-end text-danger" data-export-value="<?= e(number_format((float)$ligne['debit'], 2, '.', '')) ?>"><?= (float)$ligne['debit'] > 0 ? formatMontant((float)$ligne['debit'], $releve['currency']) : '—' ?></td>
                                             <td class="text-end text-success" data-export-value="<?= e(number_format((float)$ligne['credit'], 2, '.', '')) ?>"><?= (float)$ligne['credit'] > 0 ? formatMontant((float)$ligne['credit'], $releve['currency']) : '—' ?></td>
@@ -230,13 +206,7 @@ foreach ($lignes as $ligne) {
                                 </tbody>
                             </table>
                         </div>
-                        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 p-2 border-top no-print" data-pagination-for="bankStatementLinesTable">
-                            <div class="small text-muted" data-page-info></div>
-                            <div class="btn-group btn-group-sm">
-                                <button type="button" class="btn btn-outline-secondary" data-page-prev><i class="bi bi-chevron-left"></i></button>
-                                <button type="button" class="btn btn-outline-secondary" data-page-next><i class="bi bi-chevron-right"></i></button>
-                            </div>
-                        </div>
+
                     <?php endif; ?>
                 </div>
             </div>
@@ -331,4 +301,5 @@ foreach ($lignes as $ligne) {
     </div>
 </div>
 
+<?php $movementRegisterId = 'bankStatementLinesTable'; require __DIR__ . '/_register_movement.php'; ?>
 <?php require_once __DIR__ . '/../layouts/footer.php'; ?>

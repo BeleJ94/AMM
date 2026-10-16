@@ -29,18 +29,21 @@
 
     <?php afficherFlash(); ?>
 
-    <!-- Filtres -->
-    <div class="card filter-card mb-4">
-        <div class="card-body">
-            <form method="GET" action="<?= APP_URL ?>/contrats/liste">
+    <!-- Tableau -->
+    <div class="card section-card">
+        <div class="card-header bg-transparent border-0 fw-semibold">
+            <i class="bi bi-files me-2"></i><?= $pagination['total'] ?> contrat(s)
+        </div>
+        <div class="card-body border-bottom py-2">
+            <form data-register-filters method="GET" action="<?= APP_URL ?>/contrats/liste">
                 <div class="row g-2 align-items-center">
                     <div class="col-md-4">
-                        <input type="text" class="form-control form-control-sm" name="recherche"
+                        <input type="text" class="form-control form-control-sm" name="recherche" aria-label="Rechercher"
                                placeholder="Partenaire, objet..."
                                value="<?= e($filtres['recherche']) ?>">
                     </div>
                     <div class="col-md-2">
-                        <select class="form-select form-select-sm" name="statut">
+                        <select class="form-select form-select-sm" name="statut" aria-label="Statut">
                             <option value="">Tous les statuts</option>
                             <?php foreach (['actif','expire','resilie','renouvele'] as $s): ?>
                                 <option value="<?= $s ?>" <?= $filtres['statut'] === $s ? 'selected' : '' ?>><?= ucfirst($s) ?></option>
@@ -48,7 +51,7 @@
                         </select>
                     </div>
                     <div class="col-md-2">
-                        <select class="form-select form-select-sm" name="devise">
+                        <select class="form-select form-select-sm" name="devise" aria-label="Devise">
                             <option value="">Devise</option>
                             <option value="USD" <?= $filtres['devise'] === 'USD' ? 'selected' : '' ?>>USD</option>
                             <option value="CDF" <?= $filtres['devise'] === 'CDF' ? 'selected' : '' ?>>CDF</option>
@@ -56,28 +59,17 @@
                     </div>
                     <div class="col-md-2">
                         <div class="d-flex gap-1">
-                            <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-search"></i></button>
-                            <a href="<?= APP_URL ?>/contrats/liste" class="btn btn-outline-secondary btn-sm"><i class="bi bi-x"></i></a>
+                            <button type="submit" title="Appliquer les filtres" aria-label="Appliquer les filtres" class="btn btn-primary btn-sm w-100"><i class="bi bi-search"></i></button>
+                            <a href="<?= APP_URL ?>/contrats/liste" title="Effacer les filtres" aria-label="Effacer les filtres" class="btn btn-outline-secondary btn-sm"><i class="bi bi-x"></i></a>
                         </div>
                     </div>
                 </div>
             </form>
         </div>
-    </div>
-
-    <!-- Tableau -->
-    <div class="card section-card">
-        <div class="card-header bg-transparent border-0 fw-semibold">
-            <i class="bi bi-files me-2"></i><?= $pagination['total'] ?> contrat(s)
-        </div>
         <div class="card-body p-0">
-            <?php if (empty($contrats)): ?>
-                <div class="text-center py-5 text-muted">
-                    <i class="bi bi-file-earmark-x fs-3 d-block mb-2"></i>Aucun contrat trouvé
-                </div>
-            <?php else: ?>
+
             <div class="table-responsive">
-                <table id="tableContrats" class="table table-hover mb-0">
+                <table id="tableContrats" class="table table-sm table-hover align-middle compact mb-0" data-register-table data-register-mode="server" data-register-total="<?= (int)$pagination['total'] ?>">
                     <thead class="table-dark">
                         <tr>
                             <th>Partenaire</th>
@@ -99,7 +91,7 @@
                             if ($jours !== null && $jours <= 7 && $c['statut'] === 'actif')  $ligneCls = 'table-danger';
                             elseif ($jours !== null && $jours <= 30 && $c['statut'] === 'actif') $ligneCls = 'table-warning';
                             ?>
-                            <tr class="<?= $ligneCls ?>">
+                            <tr class="<?= $ligneCls ?>" data-register-state="<?= e($c['statut']) ?>">
                                 <td class="fw-semibold"><?= e($c['partenaire']) ?></td>
                                 <td class="text-truncate" style="max-width:200px;" title="<?= e($c['objet']) ?>"><?= e($c['objet']) ?></td>
                                 <td><?= number_format($c['valeur'], 2, ',', ' ') ?></td>
@@ -113,7 +105,7 @@
                                         </span>
                                     <?php endif; ?>
                                 </td>
-                                <td><span class="badge bg-<?= badgeStatutContrat($c['statut']) ?>"><?= e($c['statut']) ?></span></td>
+                                <td data-register-state="<?= e($c['statut']) ?>"><span class="badge bg-<?= badgeStatutContrat($c['statut']) ?>"><?= e($c['statut']) ?></span></td>
                                 <td><?= $c['tacite_reconduction'] ? '<span class="badge bg-info">Oui</span>' : '<span class="badge bg-secondary">Non</span>' ?></td>
                                 <td class="text-center">
                                     <div class="btn-group btn-group-sm">
@@ -132,17 +124,16 @@
                     </tbody>
                 </table>
             </div>
-            <?php endif; ?>
         </div>
 
         <!-- Pagination -->
         <?php if ($pagination['total_pages'] > 1): ?>
-            <div class="card-footer d-flex justify-content-end">
+            <div class="card-footer d-flex justify-content-end" data-register-pagination>
                 <nav>
                     <ul class="pagination pagination-sm mb-0">
                         <?php for ($p = 1; $p <= $pagination['total_pages']; $p++): ?>
                             <li class="page-item <?= $p == $pagination['page_courante'] ? 'active' : '' ?>">
-                                <a class="page-link" href="?<?= http_build_query(array_merge($filtres, ['page' => $p])) ?>"><?= $p ?></a>
+                                <a class="page-link" href="?<?= http_build_query(array_merge($filtres, ['page' => $p, 'per_page' => $parPage])) ?>"><?= $p ?></a>
                             </li>
                         <?php endfor; ?>
                     </ul>
@@ -151,17 +142,5 @@
         <?php endif; ?>
     </div>
 </div>
-
-<script>
-$(document).ready(function() {
-    if ($('#tableContrats').length) {
-        $('#tableContrats').DataTable({
-            paging: false, info: false, searching: false,
-            language: { url: '//cdn.datatables.net/plug-ins/1.13.4/i18n/fr-FR.json' },
-            columnDefs: [{ orderable: false, targets: 8 }]
-        });
-    }
-});
-</script>
 
 <?php require_once __DIR__ . '/../layouts/footer.php'; ?>

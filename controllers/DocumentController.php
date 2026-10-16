@@ -22,9 +22,11 @@ class DocumentController {
             'recherche' => $_GET['recherche'] ?? '',
         ];
 
+        $parPage = (int)($_GET['per_page'] ?? 15);
+        if (!in_array($parPage, [15, 25, 50, 100], true)) $parPage = 15;
         $total      = $this->documentModel->compter($filtres);
-        $pagination = paginer($total, 20, $page);
-        $documents  = $this->documentModel->lister($filtres, 20, $pagination['offset']);
+        $pagination = paginer($total, $parPage, $page);
+        $documents  = $this->documentModel->lister($filtres, $parPage, $pagination['offset']);
 
         require_once __DIR__ . '/../views/documents/liste.php';
     }

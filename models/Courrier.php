@@ -14,7 +14,7 @@ class Courrier {
     /**
      * Liste les courriers avec filtres et pagination.
      */
-    public function lister(array $filtres = [], int $limite = 20, int $offset = 0): array {
+    public function lister(array $filtres = [], int $limite = 20, int $offset = 0, string $tri = 'created_at', string $direction = 'DESC'): array {
         $sql = "SELECT c.*, u.nom AS createur
                 FROM courriers c
                 LEFT JOIN users u ON c.created_by = u.id
@@ -47,7 +47,10 @@ class Courrier {
             $params[] = $filtres['date_fin'];
         }
 
-        $sql .= " ORDER BY c.created_at DESC LIMIT ? OFFSET ?";
+        $colonnes = ['created_at', 'numero_unique', 'reference_document', 'expediteur', 'objet', 'urgence', 'statut', 'date_reception', 'deadline', 'service_destinataire'];
+        if (!in_array($tri, $colonnes, true)) $tri = 'created_at';
+        $direction = $direction === 'ASC' ? 'ASC' : 'DESC';
+        $sql .= " ORDER BY c.$tri $direction, c.id DESC LIMIT ? OFFSET ?";
         $params[] = $limite;
         $params[] = $offset;
 
@@ -81,6 +84,14 @@ class Courrier {
             $params = array_merge($params, [$term, $term, $term, $term]);
         }
 
+        if (!empty($filtres['date_debut'])) {
+            $sql .= " AND c.date_reception >= ?";
+            $params[] = $filtres['date_debut'];
+        }
+        if (!empty($filtres['date_fin'])) {
+            $sql .= " AND c.date_reception <= ?";
+            $params[] = $filtres['date_fin'];
+        }
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute($params);
         return (int)$stmt->fetchColumn();

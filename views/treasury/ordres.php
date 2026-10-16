@@ -63,9 +63,6 @@ if (!function_exists('treasuryOrderWaitingDays')) {
 ?>
 
 <style>
-.order-view-tabs { display:flex; gap:6px; flex-wrap:wrap; }
-.order-view-btn { min-height:32px; padding:5px 10px; border:1px solid #d9e3ee; border-radius:6px; color:#53657a; background:#fff; font-size:.7rem; font-weight:700; }
-.order-view-btn:hover,.order-view-btn.active { color:#1769e0; border-color:#a9c8ef; background:#edf5ff; }
 .order-number { color:#1769e0; font-weight:800; }
 .order-beneficiary { display:flex; align-items:center; gap:8px; }
 .order-avatar { width:29px; height:29px; flex:0 0 29px; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; color:#155bb7; background:#e8f1ff; font-size:.68rem; font-weight:800; }
@@ -79,12 +76,12 @@ if (!function_exists('treasuryOrderWaitingDays')) {
 .order-action-age { display:inline-flex; align-items:center; gap:4px; margin-top:4px; color:#718096; font-size:.65rem; }
 .order-action-age.is-late { color:#b12634; font-weight:700; }
 .order-action-btn { min-width:92px; white-space:nowrap; }
-.order-table-card .dataTables_wrapper > .row { margin:0; padding:11px 14px; align-items:center; border-bottom:1px solid #edf1f5; }
-.order-table-card .dataTables_wrapper > .row:last-child { border-top:1px solid #edf1f5; border-bottom:0; }
-.order-table-card .dataTables_filter { text-align:right; }
-.order-table-card .dataTables_filter input { min-width:230px; margin-left:8px; border:1px solid #cfd9e5; border-radius:6px; padding:6px 9px; }
-.order-table-card .dataTables_length select { border:1px solid #cfd9e5; border-radius:6px; padding:5px 24px 5px 8px; }
-.order-table-card .dataTables_info { color:#718096; font-size:.7rem; }
+
+
+
+
+
+
 .order-table-card .pagination { margin:0; }
 .order-kpi-link { color:inherit; text-decoration:none; cursor:pointer; }
 .order-kpi-link .erp-kpi { transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease; }
@@ -98,7 +95,6 @@ if (!function_exists('treasuryOrderWaitingDays')) {
 .order-kpi-table { font-size:.76rem; }
 .order-kpi-table th { color:#fff; background:#173e67; font-size:.65rem; text-transform:uppercase; white-space:nowrap; }
 .order-kpi-table td { vertical-align:middle; }
-@media(max-width:767.98px){.order-table-card .dataTables_filter{text-align:left;margin-top:8px}.order-table-card .dataTables_filter input{min-width:170px}.order-view-tabs{overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px}.order-view-btn{white-space:nowrap}}
 @media(max-width:575.98px){.order-next-action{min-width:230px;align-items:flex-start!important;flex-direction:column}.order-action-btn{width:100%}}
 </style>
 
@@ -158,16 +154,26 @@ if (!function_exists('treasuryOrderWaitingDays')) {
         </div>
     </div>
 
-    <div class="card filter-card mb-3">
-        <div class="card-body">
-            <form method="GET" action="<?= APP_URL ?>/treasury/ordres">
+
+
+    <div class="card section-card order-table-card">
+        <div class="card-header bg-transparent border-0 d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2">
+            <div>
+                <div class="fw-semibold"><i class="bi bi-list-check me-2"></i>Registre des ordres</div>
+                <div class="text-muted small"><?= count($ordres) ?> ordre(s) dans la sélection</div>
+            </div>
+            <div>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="exporterCSV('tableOrdresPaiement', 'registre_ordres_paiement')"><i class="bi bi-download me-1"></i>CSV</button>
+            </div>
+        </div>
+        <form data-register-filters method="GET" action="<?= APP_URL ?>/treasury/ordres">
                 <div class="row g-2 align-items-end">
-                    <div class="col-md-3">
-                        <label class="form-label small fw-semibold">Statut</label>
+                    <div class="col-md-3" data-register-advanced>
+                        <label class="form-label small fw-semibold">État de l’ordre</label>
                         <select class="form-select form-select-sm" name="status">
-                            <option value="">Tous les statuts</option>
-                            <?php foreach (['emis','execute','annule'] as $status): ?>
-                                <option value="<?= e($status) ?>" <?= ($filtres['status'] ?? '') === $status ? 'selected' : '' ?>><?= e(treasuryUiLabel($status)) ?></option>
+                            <option value="">Tous les ordres</option>
+                            <?php foreach (['emis' => 'À exécuter', 'execute' => 'Exécutés', 'annule' => 'Annulés'] as $status => $label): ?>
+                                <option value="<?= e($status) ?>" <?= ($filtres['status'] ?? '') === $status ? 'selected' : '' ?>><?= e($label) ?></option>
                             <?php endforeach; ?>
                         </select>
                     </div>
@@ -181,28 +187,12 @@ if (!function_exists('treasuryOrderWaitingDays')) {
                     </div>
                 </div>
             </form>
-        </div>
-    </div>
-
-    <div class="card section-card order-table-card">
-        <div class="card-header bg-transparent border-0 d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2">
-            <div>
-                <div class="fw-semibold"><i class="bi bi-list-check me-2"></i>Registre des ordres</div>
-                <div class="text-muted small"><?= count($ordres) ?> ordre(s) dans la sélection</div>
-            </div>
-            <div class="order-view-tabs" id="orderQuickViews">
-                <button type="button" class="order-view-btn active" data-status="">Vue complète</button>
-                <button type="button" class="order-view-btn" data-status="status-emis">À exécuter</button>
-                <button type="button" class="order-view-btn" data-status="status-execute">Exécutés</button>
-                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="exporterCSV('tableOrdresPaiement', 'registre_ordres_paiement')"><i class="bi bi-download me-1"></i>CSV</button>
-            </div>
-        </div>
         <div class="card-body p-0">
             <?php if (empty($ordres)): ?>
                 <?php treasuryUiEmptyState('bi-file-earmark-check', 'Aucun ordre de paiement trouvé', 'Ajustez les filtres ou ouvrez une demande validée pour émettre un ordre.', '<a href="' . APP_URL . '/treasury/demandes?status=validee_direction" class="btn btn-sm btn-primary"><i class="bi bi-arrow-right me-1"></i>Voir les demandes prêtes</a>'); ?>
             <?php else: ?>
                 <div class="table-responsive">
-                    <table class="table table-hover align-middle mb-0 w-100" id="tableOrdresPaiement">
+                    <table class="table table-hover align-middle mb-0 w-100" id="tableOrdresPaiement" data-register-table data-register-options='{"order":[[1,"desc"],[0,"desc"]],"stateSave":true,"columnDefs":[{"orderable":false,"searchable":true,"targets":7},{"className":"text-nowrap","targets":[0,1,2,5,6]}]}'>
                         <thead class="table-dark">
                             <tr>
                                 <th>Ordre</th>
@@ -211,6 +201,7 @@ if (!function_exists('treasuryOrderWaitingDays')) {
                                 <th>Bénéficiaire / objet</th>
                                 <th>Règlement</th>
                                 <th class="text-end">Montant</th>
+                                <th>État</th>
                                 <th>Prochaine action</th>
                             </tr>
                         </thead>
@@ -223,7 +214,7 @@ if (!function_exists('treasuryOrderWaitingDays')) {
                                 $isLate = $isPending && $waitingDays >= 2;
                                 $paymentMethod = (($ordre['account_type'] ?? '') === 'caisse') ? 'especes' : $ordre['payment_method'];
                                 ?>
-                                <tr>
+                                <tr data-register-state="<?= e($ordre['status']) ?>"<?= $ordre['status'] === 'execute' ? ' data-register-complete="true"' : '' ?>>
                                     <td data-order="<?= (int)$ordre['id'] ?>">
                                         <a href="<?= e($nextAction['url']) ?>" class="text-decoration-none"><span class="order-number"><?= e($ordre['order_number']) ?></span></a>
                                         <div class="text-muted small mt-1">Par <?= e($ordre['issued_by_nom'] ?? '—') ?></div>
@@ -241,11 +232,12 @@ if (!function_exists('treasuryOrderWaitingDays')) {
                                         <span class="badge bg-light text-secondary border mt-1"><?= e(treasuryUiLabel($paymentMethod)) ?></span>
                                     </td>
                                     <td class="fw-semibold text-end text-nowrap" data-order="<?= e((string)(float)$ordre['amount_usd']) ?>"><?= formatMontant((float)$ordre['amount'], $ordre['currency']) ?></td>
+                                    <td data-register-state="<?= e($ordre['status']) ?>"><?= e(['emis' => 'À exécuter', 'execute' => 'Exécuté', 'annule' => 'Annulé'][$ordre['status']] ?? treasuryUiLabel($ordre['status'])) ?></td>
                                     <td data-search="<?= e('status-' . $ordre['status'] . ' ' . treasuryUiLabel($ordre['status']) . ' ' . $nextAction['label'] . ' ' . $nextAction['owner']) ?>">
                                         <div class="d-flex align-items-center justify-content-between gap-3 order-next-action tone-<?= e($nextAction['tone']) ?>">
                                             <div>
                                                 <div class="order-action-label"><i class="bi <?= e($nextAction['icon']) ?> me-1 text-<?= e($nextAction['tone']) ?>"></i><?= e($nextAction['label']) ?></div>
-                                                <div class="order-action-owner"><?= e($nextAction['owner']) ?> · <span class="badge bg-light text-secondary border"><?= e(treasuryUiLabel($ordre['status'])) ?></span></div>
+                                                <div class="order-action-owner"><?= e($nextAction['owner']) ?></div>
                                                 <?php if ($isPending): ?>
                                                     <div class="order-action-age <?= $isLate ? 'is-late' : '' ?>"><i class="bi bi-clock"></i><?= $waitingDays === 0 ? 'Émis aujourd’hui' : 'En attente depuis ' . $waitingDays . ' jour' . ($waitingDays > 1 ? 's' : '') ?></div>
                                                 <?php endif; ?>
@@ -281,7 +273,7 @@ if (!function_exists('treasuryOrderWaitingDays')) {
                     <div class="col-md-4"><div class="order-kpi-summary p-3"><div class="text-muted small mb-1">Montant moyen</div><div class="order-kpi-summary-value" id="orderKpiAverage">0,00 USD</div></div></div>
                 </div>
                 <div class="table-responsive border rounded-3">
-                    <table class="table table-hover mb-0 order-kpi-table">
+                    <table class="table table-hover mb-0 order-kpi-table" id="orderKpiTable" data-register-table data-register-order='[]' data-register-filter-columns='{"5":"Compte / mode","7":"Statut"}' data-register-options='{"columnDefs":[{"targets":9,"orderable":false}]}'>
                         <thead><tr><th>Ordre</th><th>Date</th><th>Demande</th><th>Bénéficiaire</th><th>Objet</th><th>Compte / mode</th><th class="text-end">Montant</th><th>Statut</th><th>Action</th><th></th></tr></thead>
                         <tbody id="orderKpiDetailBody"></tbody>
                     </table>
@@ -314,9 +306,9 @@ function openOrderKpi(metric) {
     document.getElementById('orderKpiCount').textContent = Number(data.count || 0).toLocaleString('fr-FR');
     document.getElementById('orderKpiTotal').textContent = Number(data.total_usd || 0).toLocaleString('fr-FR', {minimumFractionDigits:2,maximumFractionDigits:2}) + ' USD';
     document.getElementById('orderKpiAverage').textContent = Number(data.average_usd || 0).toLocaleString('fr-FR', {minimumFractionDigits:2,maximumFractionDigits:2}) + ' USD';
-    var body = document.getElementById('orderKpiDetailBody');
+    var body = document.getElementById('orderKpiDetailBody'); if (window.AMMRegisters) window.AMMRegisters.destroy(body.closest('table'));
     if (!data.rows.length) {
-        body.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-5"><i class="bi bi-inboxes fs-3 d-block mb-2"></i>Aucun ordre dans cet indicateur.</td></tr>';
+        body.innerHTML = '';
     } else {
         body.innerHTML = data.rows.map(function(row) {
             var statusClass = row.status === 'Exécuté' ? 'success' : (row.status === 'Émis' ? 'warning text-dark' : 'secondary');
@@ -336,7 +328,7 @@ function openOrderKpi(metric) {
     }
     document.getElementById('orderKpiPdfButton').href = APP_URL + '/treasury/ordres-kpi-pdf?metric=' + encodeURIComponent(metric);
     document.getElementById('orderKpiExcelButton').href = APP_URL + '/treasury/ordres-kpi-excel?metric=' + encodeURIComponent(metric);
-    bootstrap.Modal.getOrCreateInstance(document.getElementById('orderKpiDetailModal')).show();
+    if (window.AMMRegisters) window.AMMRegisters.init(body.closest('table')); bootstrap.Modal.getOrCreateInstance(document.getElementById('orderKpiDetailModal')).show();
 }
 
 document.querySelectorAll('.order-kpi-link').forEach(function(card) {
@@ -349,24 +341,6 @@ document.querySelectorAll('.order-kpi-link').forEach(function(card) {
     });
 });
 
-$(function(){
-    var tableEl = $('#tableOrdresPaiement');
-    if (!tableEl.length || !$.fn.DataTable) return;
-    var table = tableEl.DataTable({
-        pageLength: 25,
-        lengthMenu: [[10,25,50,100,-1],[10,25,50,100,'Toutes']],
-        order: [[1,'desc'],[0,'desc']],
-        stateSave: true,
-        autoWidth: false,
-        columnDefs: [{orderable:false,targets:6},{className:'text-nowrap',targets:[0,1,2,5]}],
-        language: {url:'//cdn.datatables.net/plug-ins/1.13.4/i18n/fr-FR.json',search:'Rechercher dans le tableau :',lengthMenu:'Afficher _MENU_ lignes'}
-    });
-    $('#orderQuickViews .order-view-btn').on('click', function(){
-        $('#orderQuickViews .order-view-btn').removeClass('active');
-        $(this).addClass('active');
-        table.column(6).search($(this).data('status') || '').draw();
-    });
-});
 </script>
 
 <?php require_once __DIR__ . '/../layouts/footer.php'; ?>

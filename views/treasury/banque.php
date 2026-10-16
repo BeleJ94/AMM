@@ -47,9 +47,13 @@ $moisLibelles = [
 
     <?php afficherFlash(); ?>
 
-    <div class="card filter-card mb-4">
-        <div class="card-body">
-            <form method="GET" action="<?= APP_URL ?>/treasury/banque">
+
+
+    <div class="card section-card">
+        <div class="card-header bg-transparent border-0 fw-semibold">
+            <i class="bi bi-list-check me-2"></i>Releves bancaires
+        </div>
+        <form data-register-filters method="GET" action="<?= APP_URL ?>/treasury/banque">
                 <div class="row g-2 align-items-end">
                     <div class="col-md-4">
                         <label class="form-label small fw-semibold">Compte bancaire</label>
@@ -90,19 +94,12 @@ $moisLibelles = [
                     </div>
                 </div>
             </form>
-        </div>
-    </div>
-
-    <div class="card section-card">
-        <div class="card-header bg-transparent border-0 fw-semibold">
-            <i class="bi bi-list-check me-2"></i>Releves bancaires
-        </div>
         <div class="card-body p-0">
             <?php if (empty($releves)): ?>
                 <?php treasuryUiEmptyState('bi-bank', 'Aucun relevé bancaire trouvé', 'Créez un relevé mensuel pour démarrer le rapprochement.', '<a href="' . APP_URL . '/treasury/releve-ajouter" class="btn btn-sm btn-primary"><i class="bi bi-plus-lg me-1"></i>Nouveau relevé</a>'); ?>
             <?php else: ?>
                 <div class="table-responsive">
-                    <table class="table table-hover mb-0">
+                    <table class="table table-hover mb-0" id="tableRelevesBancaires" data-register-table data-register-options='{"order":[[0,"desc"]],"columnDefs":[{"targets":7,"orderable":false}]}'>
                         <thead class="table-dark">
                             <tr>
                                 <th>Periode</th>
@@ -118,7 +115,7 @@ $moisLibelles = [
                         <tbody>
                             <?php foreach ($releves as $releve): ?>
                                 <tr>
-                                    <td><?= e($moisLibelles[(int)$releve['period_month']] ?? $releve['period_month']) ?> <?= (int)$releve['period_year'] ?></td>
+                                    <td data-order="<?= sprintf('%04d-%02d', (int)$releve['period_year'], (int)$releve['period_month']) ?>"><?= e($moisLibelles[(int)$releve['period_month']] ?? $releve['period_month']) ?> <?= (int)$releve['period_year'] ?></td>
                                     <td><?= e($releve['account_nom']) ?></td>
                                     <td><?= e($releve['statement_number'] ?? '—') ?></td>
                                     <td><?= formatMontant((float)$releve['opening_balance'], $releve['currency']) ?></td>

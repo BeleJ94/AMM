@@ -19,13 +19,9 @@
     <?php afficherFlash(); ?>
 
     <div class="section-card">
-        <?php if (empty($courriers)): ?>
-            <p class="text-muted text-center py-4">
-                <i class="bi bi-inbox fs-3 d-block mb-2"></i>
-                Aucun courrier ne vous est actuellement assigné.
-            </p>
-        <?php else: ?>
-        <table id="tblMesCourriers" class="table table-hover w-100">
+
+        <div class="table-responsive">
+        <table id="tblMesCourriers" class="table table-sm table-hover align-middle compact w-100" data-register-table data-register-order='[[4,"asc"]]' data-register-filter-columns='[{"index":3,"label":"Statut assignation"},{"index":2,"label":"Urgence"}]'>
             <thead>
                 <tr>
                     <th>Numéro</th>
@@ -39,7 +35,7 @@
             </thead>
             <tbody>
                 <?php foreach ($courriers as $c): ?>
-                <tr>
+                <tr data-register-state="<?= e($c['statut_assignation'] ?? '') ?>" data-register-complete="<?= ($c['statut_assignation'] ?? '') === 'termine' ? 'true' : 'false' ?>">
                     <td>
                         <a href="<?= APP_URL ?>/courrier/voir/<?= $c['id'] ?>" class="fw-semibold text-decoration-none">
                             <?= e($c['numero_unique']) ?>
@@ -47,7 +43,7 @@
                     </td>
                     <td><?= e($c['objet']) ?></td>
                     <td><?= badgeUrgence($c['urgence']) ?></td>
-                    <td>
+                    <td data-register-state="<?= e($c['statut_assignation'] ?? '') ?>">
                         <?php
                         $sa = $c['statut_assignation'] ?? '';
                         $map = [
@@ -60,7 +56,7 @@
                         echo '<span class="badge bg-' . $info[0] . '">' . $info[1] . '</span>';
                         ?>
                     </td>
-                    <td>
+                    <td data-order="<?= e($c['due_date'] ?? '9999-12-31') ?>">
                         <?php if (!empty($c['due_date'])): ?>
                             <?php $jRestants = (int)ceil((strtotime($c['due_date']) - time()) / 86400); ?>
                             <span class="<?= $jRestants < 0 ? 'text-danger fw-semibold' : ($jRestants <= 3 ? 'text-warning fw-semibold' : '') ?>">
@@ -96,18 +92,8 @@
                 <?php endforeach; ?>
             </tbody>
         </table>
-        <?php endif; ?>
+        </div>
     </div>
 </div>
-
-<script>
-$(function () {
-    $('#tblMesCourriers').DataTable({
-        language: { url: '//cdn.datatables.net/plug-ins/1.13.7/i18n/fr-FR.json' },
-        pageLength: 25,
-        order: [[4, 'asc']]
-    });
-});
-</script>
 
 <?php require_once __DIR__ . '/../layouts/footer.php'; ?>

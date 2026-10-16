@@ -51,7 +51,7 @@
                     <i class="bi bi-file-earmark-check me-2 text-success"></i>Contrats actifs
                 </div>
                 <div class="table-responsive">
-                    <table class="table table-hover mb-0">
+                    <table data-register-table data-register-filter-columns='{"4":"Statut"}' class="table table-sm table-hover mb-0">
                         <thead class="table-light">
                             <tr>
                                 <th>Partenaire</th>
@@ -63,12 +63,12 @@
                         </thead>
                         <tbody>
                             <?php foreach ($contratsActifs as $c): ?>
-                                <tr>
+                                <tr data-register-state="<?= e($c['statut']) ?>">
                                     <td><a href="<?= APP_URL ?>/contrats/voir/<?= $c['id'] ?>"><?= e($c['partenaire']) ?></a></td>
                                     <td class="text-truncate" style="max-width:180px;"><?= e($c['objet']) ?></td>
                                     <td><?= formatMontant($c['valeur'], $c['devise']) ?></td>
                                     <td><?= formatDate($c['date_fin']) ?></td>
-                                    <td><span class="badge bg-<?= badgeStatutContrat($c['statut']) ?>"><?= e($c['statut']) ?></span></td>
+                                    <td data-register-state="<?= e($c['statut']) ?>"><span class="badge bg-<?= badgeStatutContrat($c['statut']) ?>"><?= e($c['statut']) ?></span></td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>

@@ -24,9 +24,11 @@ class ContratController {
             'recherche' => $_GET['recherche'] ?? '',
         ];
 
+        $parPage = (int)($_GET['per_page'] ?? 15);
+        if (!in_array($parPage, [15, 25, 50, 100], true)) $parPage = 15;
         $total      = $this->contratModel->compter($filtres);
-        $pagination = paginer($total, 20, $page);
-        $contrats   = $this->contratModel->lister($filtres, 20, $pagination['offset']);
+        $pagination = paginer($total, $parPage, $page);
+        $contrats   = $this->contratModel->lister($filtres, $parPage, $pagination['offset']);
 
         require_once __DIR__ . '/../views/contrats/liste.php';
     }

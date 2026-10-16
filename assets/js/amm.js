@@ -13,7 +13,8 @@ if (typeof $.fn !== 'undefined' && $.fn.DataTable) {
         language: {
             url: '//cdn.datatables.net/plug-ins/1.13.4/i18n/fr-FR.json'
         },
-        pageLength: 25,
+        pageLength: 15,
+        lengthMenu: [15, 25, 50, 100],
         responsive: true,
         dom: '<"row mb-2"<"col-sm-6"l><"col-sm-6"f>>rt<"row mt-2"<"col-sm-6"i><"col-sm-6"p>>',
     });
@@ -180,7 +181,10 @@ function exporterCSV(tableId, nomFichier = 'export') {
     const table = document.getElementById(tableId);
     if (!table) return;
 
-    const rows = table.querySelectorAll('tr');
+    const dt = window.jQuery && $.fn.dataTable && $.fn.dataTable.isDataTable(table) ? $(table).DataTable() : null;
+    const rows = dt
+        ? [...table.querySelectorAll('thead tr'), ...dt.rows({search:'applied',order:'applied'}).nodes().toArray(), ...table.querySelectorAll('tfoot tr')]
+        : table.querySelectorAll('tr');
     const csv  = [];
 
     rows.forEach(row => {
@@ -519,7 +523,7 @@ function openDashboardDetailModal(config) {
             '        <p class="text-muted mb-0 fw-semibold small">Aucune donnée disponible</p>' +
             '      </div>' +
             '      <div id="dsdTableWrap" class="table-responsive">' +
-            '        <table class="table table-hover align-middle mb-0" id="dashboardDetailModalTable"></table>' +
+            '        <table class="table table-hover align-middle mb-0" id="dashboardDetailModalTable" data-register-table></table>' +
             '      </div>' +
             '    </div>' +
             '    <div class="modal-footer px-4 py-3 d-flex justify-content-between align-items-center" style="background:#f8fafc">' +
@@ -554,6 +558,8 @@ function openDashboardDetailModal(config) {
     var emptyEl     = document.getElementById('dsdEmptyState');
     var searchInput = document.getElementById('dsdSearchInput');
     var rowCountEl  = document.getElementById('dsdRowCount');
+    if (window.AMMRegisters) window.AMMRegisters.destroy(tableEl);
+    tableEl.innerHTML = '';
 
     // Appliquer la couleur d'accentuation
     accentEl.style.background            = pal.accent;
@@ -624,6 +630,8 @@ function openDashboardDetailModal(config) {
         }).join('');
 
         tableEl.innerHTML = '<thead><tr>' + headersHtml + '</tr></thead><tbody>' + bodyHtml + '</tbody>';
+        tableEl.dataset.registerOptions = JSON.stringify({dom:'<"row mb-2"<"col-12"l>>rt<"row mt-2"<"col-md-5"i><"col-md-7"p>>'});
+        if (window.AMMRegisters) window.AMMRegisters.init(tableEl);
 
         // Hover arrow animation
         tableEl.querySelectorAll('.dsd-row-link').forEach(function(row) {
@@ -644,6 +652,12 @@ function openDashboardDetailModal(config) {
 
     // Recherche live
     searchInput.oninput = function() {
+        if ($.fn.dataTable.isDataTable(tableEl)) {
+            var api = $(tableEl).DataTable();
+            api.search(this.value).draw();
+            rowCountEl.textContent = api.rows({search:'applied'}).count() + ' / ' + total + ' résultats';
+            return;
+        }
         var term = this.value.toLowerCase().trim();
         var rows = tableEl.querySelectorAll('tbody tr');
         var visible = 0;

@@ -21,9 +21,12 @@
 
     <?php afficherFlash(); ?>
 
-    <div class="card filter-card mb-4">
-        <div class="card-body">
-            <form method="GET" action="<?= APP_URL ?>/finance/factures">
+    <div class="card section-card">
+        <div class="card-header bg-transparent border-0 fw-semibold">
+            <i class="bi bi-files me-2"></i><?= (int)$pagination['total'] ?> facture(s)
+        </div>
+        <form data-register-filters method="GET" action="<?= APP_URL ?>/finance/factures">
+                <input type="hidden" name="per_page" value="<?= (int)$parPage ?>">
                 <div class="row g-2 align-items-center">
                     <div class="col-md-2">
                         <select class="form-select form-select-sm" name="type_facture">
@@ -66,21 +69,11 @@
                     </div>
                 </div>
             </form>
-        </div>
-    </div>
 
-    <div class="card section-card">
-        <div class="card-header bg-transparent border-0 fw-semibold">
-            <i class="bi bi-files me-2"></i><?= (int)$pagination['total'] ?> facture(s)
-        </div>
         <div class="card-body p-0">
-            <?php if (empty($factures)): ?>
-                <div class="text-center py-5 text-muted">
-                    <i class="bi bi-receipt fs-3 d-block mb-2"></i>Aucune facture trouvée
-                </div>
-            <?php else: ?>
+
             <div class="table-responsive">
-                <table class="table table-hover mb-0">
+                <table class="table table-sm table-hover mb-0" data-register-table data-register-mode="server" data-register-total="<?= (int)$pagination['total'] ?>" data-register-page-size="<?= (int)$parPage ?>">
                     <thead class="table-dark">
                         <tr>
                             <th>Numéro</th>
@@ -99,7 +92,7 @@
                     <tbody>
                         <?php foreach ($factures as $f): ?>
                             <?php $reste = (float)$f['montant_total'] - (float)$f['montant_paye']; ?>
-                            <tr>
+                            <tr data-register-state="<?= e($f['statut']) ?>" data-register-complete="<?= $f['statut'] === 'payee' ? 'true' : 'false' ?>">
                                 <td class="fw-semibold"><?= e($f['numero_facture']) ?></td>
                                 <td><span class="badge bg-<?= $f['type_facture'] === 'client' ? 'primary' : 'warning text-dark' ?>"><?= e($f['type_facture']) ?></span></td>
                                 <td><?= e($f['partenaire']) ?></td>
@@ -109,7 +102,7 @@
                                 <td><?= formatMontant((float)$f['montant_total'], $f['devise']) ?></td>
                                 <td><?= formatMontant((float)$f['montant_paye'], $f['devise']) ?></td>
                                 <td class="<?= $reste > 0 ? 'text-danger fw-semibold' : 'text-success' ?>"><?= formatMontant($reste, $f['devise']) ?></td>
-                                <td><span class="badge bg-secondary"><?= e($f['statut']) ?></span></td>
+                                <td data-register-state="<?= e($f['statut']) ?>"><span class="badge bg-secondary"><?= e($f['statut']) ?></span></td>
                                 <td class="text-center">
                                     <a href="<?= APP_URL ?>/finance/facture-voir/<?= (int)$f['id'] ?>" class="btn btn-sm btn-outline-primary">
                                         <i class="bi bi-eye"></i>
@@ -120,16 +113,16 @@
                     </tbody>
                 </table>
             </div>
-            <?php endif; ?>
+
         </div>
 
         <?php if ($pagination['total_pages'] > 1): ?>
-            <div class="card-footer d-flex justify-content-end">
+            <div class="card-footer d-flex justify-content-end" data-register-pagination>
                 <nav>
                     <ul class="pagination pagination-sm mb-0">
                         <?php for ($p = 1; $p <= $pagination['total_pages']; $p++): ?>
                             <li class="page-item <?= $p == $pagination['page_courante'] ? 'active' : '' ?>">
-                                <a class="page-link" href="?<?= http_build_query(array_merge($filtres, ['page' => $p])) ?>"><?= $p ?></a>
+                                <a class="page-link" href="?<?= http_build_query(array_merge($filtres, ['page' => $p, 'per_page' => $parPage])) ?>"><?= $p ?></a>
                             </li>
                         <?php endfor; ?>
                     </ul>

@@ -475,7 +475,7 @@ $ganttCsrfToken = genererTokenCSRF();
 
                             <h6 class="fw-semibold mb-2">Matrice jalons et taches contributrices</h6>
                             <div class="table-responsive">
-                                <table class="table table-sm table-hover mb-0">
+                                <table id="tableProjectMilestoneMatrix" class="table table-sm table-hover align-middle compact mb-0" data-register-table data-register-filter-columns='[{"index":5,"label":"Confiance"},{"index":1,"label":"Phase"}]'>
                                     <thead class="table-light">
                                         <tr><th>Jalon</th><th>Phase</th><th>Date butoir</th><th class="text-center">Taches contributrices</th><th class="text-center">Ouvertes</th><th>Confiance</th></tr>
                                     </thead>
@@ -498,7 +498,7 @@ $ganttCsrfToken = genererTokenCSRF();
                                         <tr>
                                             <td><?= e($mx['titre']) ?></td>
                                             <td><?= e($mx['phase_nom']) ?></td>
-                                            <td><?= formatDate($mx['date_butoir']) ?></td>
+                                            <td data-order="<?= e($mx['date_butoir'] ?? '') ?>"><?= formatDate($mx['date_butoir']) ?></td>
                                             <td class="text-center"><?= (int)$mx['contrib'] ?></td>
                                             <td class="text-center"><?= (int)$mx['pending'] ?></td>
                                             <td><span class="badge bg-<?= $confidenceClass ?>"><?= $confidence ?></span></td>
@@ -518,7 +518,7 @@ $ganttCsrfToken = genererTokenCSRF();
                             </div>
 
                             <div class="table-responsive">
-                                <table class="table table-sm table-hover mb-3" id="tableProjectTasks">
+                                <table class="table table-sm table-hover align-middle compact mb-3" id="tableProjectTasks" data-register-table data-register-filter-columns='[{"index":3,"label":"Statut"},{"index":1,"label":"Agent"}]' data-register-options='{"columnDefs":[{"targets":4,"searchable":false}]}'>
                                     <thead class="table-light">
                                         <tr><th>Tache</th><th>Agent</th><th>Deadline</th><th>Statut</th><th class="text-center">Action</th></tr>
                                     </thead>
@@ -539,14 +539,14 @@ $ganttCsrfToken = genererTokenCSRF();
                                         $rowPhase = (int)($t['phase_id'] ?? 0);
                                         $assignedTo = (int)($t['assigned_to'] ?? 0);
                                         ?>
-                                        <tr class="project-task-row <?= $isLate ? 'table-danger' : '' ?>" data-phase-id="<?= $rowPhase ?>" data-assigned-to="<?= $assignedTo ?>" data-late="<?= $isLate ? '1' : '0' ?>">
+                                        <tr class="project-task-row <?= $isLate ? 'table-danger' : '' ?>" data-phase-id="<?= $rowPhase ?>" data-assigned-to="<?= $assignedTo ?>" data-late="<?= $isLate ? '1' : '0' ?>" data-register-state="<?= e($t['statut']) ?>" data-register-complete="<?= $t['statut'] === 'termine' ? 'true' : 'false' ?>">
                                             <td>
                                                 <div class="fw-semibold"><?= e($t['titre']) ?></div>
                                                 <div class="small text-muted"><?= e($t['phase_nom'] ?? 'General') ?> | Priorite: <?= e($t['priorite']) ?></div>
                                             </td>
                                             <td><?= e($t['assigne_nom'] ?? 'Non assigne') ?></td>
-                                            <td><?= formatDate($t['deadline']) ?></td>
-                                            <td><span class="badge bg-<?= $badge ?>"><?= e($t['statut']) ?></span></td>
+                                            <td data-order="<?= e($t['deadline'] ?? '') ?>"><?= formatDate($t['deadline']) ?></td>
+                                            <td data-register-state="<?= e($t['statut']) ?>"><span class="badge bg-<?= $badge ?>"><?= e($t['statut']) ?></span></td>
                                             <td class="text-center">
                                                 <form method="POST" action="<?= APP_URL ?>/projets/tache-statut/<?= (int)$t['id'] ?>" class="d-inline-flex gap-1">
                                                     <input type="hidden" name="csrf_token" value="<?= genererTokenCSRF() ?>">
@@ -608,7 +608,7 @@ $ganttCsrfToken = genererTokenCSRF();
 
                         <div class="tab-pane fade" id="tab-jalons" role="tabpanel" aria-labelledby="tab-jalons-link">
                             <div class="table-responsive">
-                                <table class="table table-sm table-hover mb-3" id="tableProjectMilestones">
+                                <table class="table table-sm table-hover align-middle compact mb-3" id="tableProjectMilestones" data-register-table data-register-filter-columns='[{"index":3,"label":"Statut"},{"index":1,"label":"Phase"}]' data-register-options='{"columnDefs":[{"targets":4,"searchable":false}]}'>
                                     <thead class="table-light">
                                         <tr><th>Jalon</th><th>Phase</th><th>Date butoir</th><th>Statut</th><th class="text-center">Action</th></tr>
                                     </thead>
@@ -626,14 +626,14 @@ $ganttCsrfToken = genererTokenCSRF();
                                         $rowPhase = (int)($j['phase_id'] ?? 0);
                                         $jalonTaskSelected = $jalonTaskLinks[(int)$j['id']]['task_ids'] ?? [];
                                         ?>
-                                        <tr class="project-milestone-row" data-phase-id="<?= $rowPhase ?>">
+                                        <tr class="project-milestone-row" data-phase-id="<?= $rowPhase ?>" data-register-state="<?= e($statut) ?>" data-register-complete="<?= $statut === 'atteint' ? 'true' : 'false' ?>">
                                             <td>
                                                 <div class="fw-semibold"><?= e($j['titre']) ?></div>
                                                 <div class="small text-muted"><?= e($j['description'] ?? '') ?></div>
                                             </td>
                                             <td><?= e($j['phase_nom'] ?? 'General') ?></td>
-                                            <td><?= formatDate($j['date_butoir']) ?></td>
-                                            <td><span class="badge bg-<?= $badge ?>"><?= e($statut) ?></span></td>
+                                            <td data-order="<?= e($j['date_butoir'] ?? '') ?>"><?= formatDate($j['date_butoir']) ?></td>
+                                            <td data-register-state="<?= e($statut) ?>"><span class="badge bg-<?= $badge ?>"><?= e($statut) ?></span></td>
                                             <td class="text-center">
                                                 <form method="POST" action="<?= APP_URL ?>/projets/jalon-statut/<?= (int)$j['id'] ?>" class="d-inline-flex gap-1">
                                                     <input type="hidden" name="csrf_token" value="<?= genererTokenCSRF() ?>">
@@ -645,10 +645,8 @@ $ganttCsrfToken = genererTokenCSRF();
                                                     </select>
                                                     <button class="btn btn-outline-primary btn-sm" type="submit"><i class="bi bi-check2"></i></button>
                                                 </form>
-                                            </td>
-                                        </tr>
-                                        <tr class="project-milestone-row" data-phase-id="<?= $rowPhase ?>">
-                                            <td colspan="5" class="bg-light-subtle">
+                                                <button type="button" class="btn btn-outline-secondary btn-sm mt-1" data-milestone-links="<?= (int)$j['id'] ?>" aria-expanded="false"><i class="bi bi-link-45deg me-1"></i>Tâches liées</button>
+                                                <template id="projectMilestoneLinks<?= (int)$j['id'] ?>">
                                                 <form method="POST" action="<?= APP_URL ?>/projets/jalon-taches/<?= (int)$j['id'] ?>" class="row g-2 align-items-end">
                                                     <input type="hidden" name="csrf_token" value="<?= genererTokenCSRF() ?>">
                                                     <input type="hidden" name="project_id" value="<?= (int)$projet['id'] ?>">
@@ -676,6 +674,7 @@ $ganttCsrfToken = genererTokenCSRF();
                                                         <button class="btn btn-outline-secondary btn-sm w-100" type="submit">Enregistrer liaisons</button>
                                                     </div>
                                                 </form>
+                                                </template>
                                             </td>
                                         </tr>
                                     <?php endforeach; ?>
@@ -704,7 +703,7 @@ $ganttCsrfToken = genererTokenCSRF();
 
                         <div class="tab-pane fade" id="tab-phases" role="tabpanel" aria-labelledby="tab-phases-link">
                             <div class="table-responsive">
-                                <table class="table table-sm table-hover mb-3">
+                                <table id="tableProjectPhases" class="table table-sm table-hover align-middle compact mb-3" data-register-table data-register-filter-columns='{"3":"Statut"}'>
                                     <thead class="table-light">
                                         <tr><th>#</th><th>Phase</th><th>Periode</th><th>Statut</th><th>Avancement</th></tr>
                                     </thead>
@@ -713,14 +712,14 @@ $ganttCsrfToken = genererTokenCSRF();
                                         <tr><td colspan="5" class="text-center text-muted py-3">Aucune phase.</td></tr>
                                     <?php endif; ?>
                                     <?php foreach ($phases as $ph): ?>
-                                        <tr>
+                                        <tr data-register-state="<?= e($ph['statut']) ?>" data-register-complete="<?= $ph['statut'] === 'termine' ? 'true' : 'false' ?>">
                                             <td><?= (int)$ph['ordre_phase'] ?></td>
                                             <td>
                                                 <div class="fw-semibold"><?= e($ph['nom']) ?></div>
                                                 <div class="small text-muted"><?= e($ph['description'] ?? '') ?></div>
                                             </td>
                                             <td><?= formatDate($ph['date_debut']) ?> - <?= formatDate($ph['date_fin']) ?></td>
-                                            <td><span class="badge bg-secondary"><?= e($ph['statut']) ?></span></td>
+                                            <td data-register-state="<?= e($ph['statut']) ?>"><span class="badge bg-secondary"><?= e($ph['statut']) ?></span></td>
                                             <td><?= number_format((float)$ph['progress_pct'], 0) ?>%</td>
                                         </tr>
                                     <?php endforeach; ?>
@@ -1071,7 +1070,58 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    function matchesProjectRow(row, task) {
+        if (!row) return false;
+        var rowPhase = row.getAttribute('data-phase-id') || '0';
+        if (currentPhaseFilter !== 'all' && rowPhase !== String(currentPhaseFilter)) return false;
+        if (!task) return true;
+        var assignedTo = parseInt(row.getAttribute('data-assigned-to') || '0', 10);
+        if (currentTaskScope === 'mine') return assignedTo === currentUserId;
+        if (currentTaskScope === 'team') return assignedTo > 0 && assignedTo !== currentUserId;
+        if (currentTaskScope === 'late') return row.getAttribute('data-late') === '1';
+        return true;
+    }
+
+    // Filter the whole register, including rows outside the currently displayed page.
+    $.fn.dataTable.ext.search.push(function(settings, data, dataIndex) {
+        var id = settings.nTable.id;
+        if (id !== 'tableProjectTasks' && id !== 'tableProjectMilestones') return true;
+        var api = new $.fn.dataTable.Api(settings);
+        return matchesProjectRow(api.row(dataIndex).node(), id === 'tableProjectTasks');
+    });
+
+    $('#tableProjectMilestones').on('click', '[data-milestone-links]', function() {
+        if (!$.fn.dataTable.isDataTable('#tableProjectMilestones')) return;
+        var api = $('#tableProjectMilestones').DataTable();
+        var row = api.row(this.closest('tr'));
+        if (row.child.isShown()) {
+            row.child.hide();
+            this.setAttribute('aria-expanded', 'false');
+            this.classList.remove('active');
+            return;
+        }
+        if (!row.child()) {
+            var template = row.node().querySelector('template');
+            if (!template) return;
+            var panel = document.createElement('div');
+            panel.id = 'projectMilestoneLinksPanel' + this.getAttribute('data-milestone-links');
+            panel.className = 'p-3 bg-light-subtle text-start';
+            panel.append(template.content.cloneNode(true));
+            this.setAttribute('aria-controls', panel.id);
+            row.child(panel);
+        }
+        row.child.show();
+        this.setAttribute('aria-expanded', 'true');
+        this.classList.add('active');
+    });
+
     function applyTaskFilters() {
+        if ($.fn.dataTable.isDataTable('#tableProjectTasks')) {
+            $('#tableProjectTasks').DataTable().draw();
+            var message = document.getElementById('taskFilterEmpty');
+            if (message) message.classList.add('d-none');
+            return;
+        }
         var visibleTasks = 0;
         document.querySelectorAll('.project-task-row').forEach(function(row) {
             var rowPhase = row.getAttribute('data-phase-id') || '0';
@@ -1102,6 +1152,12 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function applyMilestoneFilters() {
+        if ($.fn.dataTable.isDataTable('#tableProjectMilestones')) {
+            $('#tableProjectMilestones').DataTable().draw();
+            var message = document.getElementById('milestoneFilterEmpty');
+            if (message) message.classList.add('d-none');
+            return;
+        }
         var visibleMilestones = 0;
         document.querySelectorAll('.project-milestone-row').forEach(function(row) {
             var rowPhase = row.getAttribute('data-phase-id') || '0';

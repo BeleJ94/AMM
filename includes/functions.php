@@ -31,6 +31,7 @@ function verifierSession(): void {
  */
 function verifierRole(array $rolesAutorises): void {
     if (!in_array($_SESSION['user_role'] ?? '', $rolesAutorises, true)) {
+        logAudit('Accès refusé : rôle insuffisant', 'audit_logs', null, json_encode(['roles_requis'=>$rolesAutorises],JSON_UNESCAPED_UNICODE));
         $_SESSION['flash_erreur'] = "Accès refusé : vous n'avez pas les droits nécessaires.";
         redirect('/dashboard');
     }
@@ -237,17 +238,27 @@ function traiterUpload(array $fichier, string $sousRepertoire = '') {
  */
 function logAudit(string $action, string $table = '', ?int $recordId = null, ?string $details = null): void {
     try {
+        require_once __DIR__ . '/../models/AuditLog.php';
+        $actorId = !empty($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
+        $decoded = $details !== null ? json_decode($details, true) : null;
+        $metadata = [
+            '_audit_version'=>1,
+            'acteur'=>['nom'=>$actorId ? ($_SESSION['user_nom'] ?? null) : null, 'role'=>$actorId ? ($_SESSION['user_role'] ?? null) : null, 'departement'=>$actorId ? ($_SESSION['user_service'] ?? null) : null],
+            'contexte'=>['methode'=>PHP_SAPI === 'cli' ? 'CLI' : ($_SERVER['REQUEST_METHOD'] ?? ''), 'route'=>mb_substr((string)($_GET['url'] ?? basename((string)($_SERVER['SCRIPT_NAME'] ?? ''))),0,250)],
+            'evenement'=>AuditLog::nettoyer($decoded ?? $details),
+        ];
+        $details = json_encode($metadata, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
         $pdo  = getDB();
         $stmt = $pdo->prepare(
             "INSERT INTO audit_logs (user_id, action, table_name, record_id, ip_address, details, created_at)
              VALUES (?, ?, ?, ?, ?, ?, NOW())"
         );
         $stmt->execute([
-            $_SESSION['user_id'] ?? null,
-            $action,
-            $table ?: null,
+            $actorId,
+            mb_substr($action,0,255),
+            $table !== '' ? mb_substr($table,0,50) : null,
             $recordId,
-            $_SERVER['REMOTE_ADDR'] ?? null,
+            filter_var($_SERVER['REMOTE_ADDR'] ?? '', FILTER_VALIDATE_IP) ?: null,
             $details
         ]);
     } catch (PDOException $e) {

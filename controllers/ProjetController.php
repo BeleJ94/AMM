@@ -23,9 +23,11 @@ class ProjetController {
             'recherche' => trim($_GET['recherche'] ?? ''),
         ];
 
+        $parPage = (int)($_GET['per_page'] ?? 15);
+        if (!in_array($parPage, [15, 25, 50, 100], true)) $parPage = 15;
         $total = $this->projetModel->compter($filtres);
-        $pagination = paginer($total, 20, $page);
-        $projets = $this->projetModel->lister($filtres, 20, $pagination['offset']);
+        $pagination = paginer($total, $parPage, $page);
+        $projets = $this->projetModel->lister($filtres, $parPage, $pagination['offset']);
         $stats = $this->projetModel->statistiquesGlobales();
         $responsables = $this->userModel->listerTous(true);
 

@@ -57,7 +57,7 @@ $_openProjets = ($section === 'projets');
 $_openTreasury = ($section === 'treasury');
 $_openFinance = ($section === 'finance');
 $_openPilotage = (strpos($urlCourante, 'dashboard/') === 0);
-$_openAdmin = in_array($section, ['users','admin-finance','admin-departements'], true);
+$_openAdmin = in_array($section, ['users','admin-finance','admin-departements','admin-logs'], true);
 
 if (!function_exists('menuItem')) {
     function menuItem(string $href, string $icon, string $label, string $urlActive, string $urlCible, ?int $badge = null, bool $exact = false, bool $forceActive = false): string {
@@ -228,6 +228,7 @@ if (!function_exists('quickActionItem')) {
                 <div class="app-sidebar-section-body mt-2">
                     <?= menuItem(APP_URL . '/users/liste', 'bi-people', 'Utilisateurs', $urlCourante, 'users') ?>
                     <?= menuItem(APP_URL . '/admin-departements', 'bi-buildings', 'Départements', $urlCourante, 'admin-departements') ?>
+                    <?= menuItem(APP_URL . '/admin-logs', 'bi-clock-history', 'Journal des utilisateurs', $urlCourante, 'admin-logs') ?>
                     <?= menuItem(APP_URL . '/admin-finance', 'bi-bank', 'Paramètres financiers', $urlCourante, 'admin-finance') ?>
                 </div>
             </div>

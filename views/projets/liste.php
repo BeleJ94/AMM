@@ -53,15 +53,18 @@
         </div>
     </div>
 
-    <div class="card filter-card mb-4">
-        <div class="card-body">
-            <form method="GET" action="<?= APP_URL ?>/projets/liste">
+    <div class="card section-card">
+        <div class="card-header bg-transparent border-0 fw-semibold">
+            <i class="bi bi-kanban me-2"></i><?= (int)$pagination['total'] ?> projet(s)
+        </div>
+        <div class="card-body border-bottom py-2">
+            <form data-register-filters method="GET" action="<?= APP_URL ?>/projets/liste">
                 <div class="row g-2 align-items-center">
                     <div class="col-md-4">
-                        <input type="text" class="form-control form-control-sm" name="recherche" placeholder="Titre, description..." value="<?= e($filtres['recherche']) ?>">
+                        <input type="text" class="form-control form-control-sm" name="recherche" aria-label="Rechercher" placeholder="Titre, description..." value="<?= e($filtres['recherche']) ?>">
                     </div>
                     <div class="col-md-2">
-                        <select class="form-select form-select-sm" name="statut">
+                        <select class="form-select form-select-sm" name="statut" aria-label="Statut">
                             <option value="">Tous les statuts</option>
                             <?php foreach (['non_demarre', 'en_cours', 'termine', 'en_retard', 'suspendu'] as $s): ?>
                                 <option value="<?= $s ?>" <?= $filtres['statut'] === $s ? 'selected' : '' ?>><?= e($s) ?></option>
@@ -69,7 +72,7 @@
                         </select>
                     </div>
                     <div class="col-md-3">
-                        <select class="form-select form-select-sm" name="responsable_id">
+                        <select class="form-select form-select-sm" name="responsable_id" aria-label="Responsable">
                             <option value="">Tous les responsables</option>
                             <?php foreach ($responsables as $u): ?>
                                 <option value="<?= (int)$u['id'] ?>" <?= (int)$filtres['responsable_id'] === (int)$u['id'] ? 'selected' : '' ?>>
@@ -80,27 +83,17 @@
                     </div>
                     <div class="col-md-2">
                         <div class="d-flex gap-1">
-                            <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-search"></i></button>
-                            <a href="<?= APP_URL ?>/projets/liste" class="btn btn-outline-secondary btn-sm"><i class="bi bi-x"></i></a>
+                            <button type="submit" title="Appliquer les filtres" aria-label="Appliquer les filtres" class="btn btn-primary btn-sm w-100"><i class="bi bi-search"></i></button>
+                            <a href="<?= APP_URL ?>/projets/liste" title="Effacer les filtres" aria-label="Effacer les filtres" class="btn btn-outline-secondary btn-sm"><i class="bi bi-x"></i></a>
                         </div>
                     </div>
                 </div>
             </form>
         </div>
-    </div>
-
-    <div class="card section-card">
-        <div class="card-header bg-transparent border-0 fw-semibold">
-            <i class="bi bi-kanban me-2"></i><?= (int)$pagination['total'] ?> projet(s)
-        </div>
         <div class="card-body p-0">
-            <?php if (empty($projets)): ?>
-                <div class="text-center py-5 text-muted">
-                    <i class="bi bi-folder-x fs-3 d-block mb-2"></i>Aucun projet trouve
-                </div>
-            <?php else: ?>
+
                 <div class="table-responsive">
-                    <table id="tableProjets" class="table table-hover mb-0">
+                    <table id="tableProjets" class="table table-sm table-hover align-middle compact mb-0" data-register-table data-register-mode="server" data-register-total="<?= (int)$pagination['total'] ?>">
                         <thead class="table-dark">
                             <tr>
                                 <th>Titre</th>
@@ -122,7 +115,7 @@
                             if ($p['statut'] === 'en_retard') $badgeClass = 'danger';
                             if ($p['statut'] === 'suspendu') $badgeClass = 'warning text-dark';
                             ?>
-                            <tr>
+                            <tr data-register-state="<?= e($p['statut']) ?>" data-register-complete="<?= $p['statut'] === 'termine' ? 'true' : 'false' ?>">
                                 <td>
                                     <a href="<?= APP_URL ?>/projets/voir/<?= (int)$p['id'] ?>" class="fw-semibold text-decoration-none">
                                         <?= e($p['titre']) ?>
@@ -140,7 +133,7 @@
                                         </span>
                                     <?php endif; ?>
                                 </td>
-                                <td><span class="badge bg-<?= $badgeClass ?>"><?= e($p['statut']) ?></span></td>
+                                <td data-register-state="<?= e($p['statut']) ?>"><span class="badge bg-<?= $badgeClass ?>"><?= e($p['statut']) ?></span></td>
                                 <td class="text-center">
                                     <div class="btn-group btn-group-sm">
                                         <a href="<?= APP_URL ?>/projets/voir/<?= (int)$p['id'] ?>" class="btn btn-outline-primary" title="Voir">
@@ -159,16 +152,15 @@
                         </tbody>
                     </table>
                 </div>
-            <?php endif; ?>
         </div>
 
         <?php if ($pagination['total_pages'] > 1): ?>
-            <div class="card-footer d-flex justify-content-end">
+            <div class="card-footer d-flex justify-content-end" data-register-pagination>
                 <nav>
                     <ul class="pagination pagination-sm mb-0">
                         <?php for ($p = 1; $p <= $pagination['total_pages']; $p++): ?>
                             <li class="page-item <?= $p === $pagination['page_courante'] ? 'active' : '' ?>">
-                                <a class="page-link" href="?<?= http_build_query(array_merge($filtres, ['page' => $p])) ?>"><?= $p ?></a>
+                                <a class="page-link" href="?<?= http_build_query(array_merge($filtres, ['page' => $p, 'per_page' => $parPage])) ?>"><?= $p ?></a>
                             </li>
                         <?php endfor; ?>
                     </ul>
@@ -177,19 +169,5 @@
         <?php endif; ?>
     </div>
 </div>
-
-<script>
-$(document).ready(function() {
-    if ($('#tableProjets').length) {
-        $('#tableProjets').DataTable({
-            paging: false,
-            info: false,
-            searching: false,
-            language: { url: '//cdn.datatables.net/plug-ins/1.13.4/i18n/fr-FR.json' },
-            columnDefs: [{ orderable: false, targets: 6 }]
-        });
-    }
-});
-</script>
 
 <?php require_once __DIR__ . '/../layouts/footer.php'; ?>

@@ -104,7 +104,7 @@
                     <i class="bi bi-list-check me-2"></i>Transactions récentes
                 </div>
                 <div class="table-responsive">
-                    <table class="table table-hover mb-0">
+                    <table data-register-table data-register-filter-columns='{"2":"Flux","3":"Catégorie","6":"Statut"}' class="table table-sm table-hover mb-0">
                         <thead class="table-light">
                             <tr>
                                 <th>Réf</th>
@@ -121,7 +121,7 @@
                                 <tr><td colspan="7" class="text-center py-4 text-muted">Aucune transaction enregistrée.</td></tr>
                             <?php endif; ?>
                             <?php foreach ($transactionsRecentes as $t): ?>
-                                <tr>
+                                <tr data-register-state="<?= e($t['statut']) ?>" data-register-complete="false">
                                     <td class="fw-semibold"><?= e($t['reference_unique']) ?></td>
                                     <td><?= formatDate($t['date_operation']) ?></td>
                                     <td>
@@ -132,7 +132,7 @@
                                     <td><?= e($t['categorie_nom']) ?></td>
                                     <td><?= formatMontant((float)$t['montant'], $t['devise']) ?></td>
                                     <td><?= e($t['compte_nom']) ?></td>
-                                    <td>
+                                    <td data-register-state="<?= e($t['statut']) ?>">
                                         <?php
                                         $badge = 'secondary';
                                         if ($t['statut'] === 'valide') $badge = 'success';

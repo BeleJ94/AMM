@@ -266,43 +266,19 @@ $livreExcelUrl = APP_URL . '/treasury/caisse-excel?cash_account_id=' . (int)$com
                             </button>
                         </span>
                     </div>
-                    <div class="card-body border-bottom no-print">
-                        <div class="row g-2 align-items-end" data-movement-controls="cashMovementsTable">
-                            <div class="col-md-3">
-                                <label class="form-label small fw-semibold">Date début</label>
-                                <input type="date" class="form-control form-control-sm" data-filter-start value="<?= e($filtres['date_debut']) ?>">
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label small fw-semibold">Date fin</label>
-                                <input type="date" class="form-control form-control-sm" data-filter-end value="<?= e($filtres['date_fin']) ?>">
-                            </div>
-                            <div class="col-md-2">
-                                <label class="form-label small fw-semibold">Tri</label>
-                                <select class="form-select form-select-sm" data-sort-order>
-                                    <option value="asc">Croissant</option>
-                                    <option value="desc">Décroissant</option>
-                                </select>
-                            </div>
-                            <div class="col-md-2">
-                                <label class="form-label small fw-semibold">Affichage</label>
-                                <select class="form-select form-select-sm" data-display-mode>
-                                    <option value="continuous">Continu</option>
-                                    <option value="paginated">Pagination</option>
-                                </select>
-                            </div>
-                            <div class="col-md-2 d-flex gap-1">
-                                <button type="button" class="btn btn-outline-secondary btn-sm w-100" data-reset-filters>
-                                    <i class="bi bi-arrow-counterclockwise me-1"></i>Reset
-                                </button>
-                            </div>
+                    <form data-register-filters data-register-client="true" data-register-movement="cashMovementsTable" class="no-print">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-md-3"><label class="form-label small fw-semibold" for="cashMovementsTableStart">Date début</label><input id="cashMovementsTableStart" type="date" name="movement_start" class="form-control form-control-sm" data-filter-start value="<?= e($filtres['date_debut']) ?>"></div>
+                            <div class="col-md-3"><label class="form-label small fw-semibold" for="cashMovementsTableEnd">Date fin</label><input id="cashMovementsTableEnd" type="date" name="movement_end" class="form-control form-control-sm" data-filter-end value="<?= e($filtres['date_fin']) ?>"></div>
+                            <div class="col-md-2"><button type="reset" class="btn btn-outline-secondary btn-sm" title="Réinitialiser les dates"><i class="bi bi-arrow-counterclockwise me-1"></i>Réinitialiser</button></div>
                         </div>
-                    </div>
+                    </form>
                     <div class="card-body p-0">
                         <?php if (empty($mouvementsAvecSolde)): ?>
                             <?php treasuryUiEmptyState('bi-inboxes', 'Aucun mouvement espèces', 'Les encaissements espèces et paiements caisse de cette période apparaîtront ici.'); ?>
                         <?php else: ?>
                             <div class="table-responsive">
-                                <table class="table table-sm table-hover mb-0 treasury-compact-table" id="cashMovementsTable">
+                                <table class="table table-sm table-hover mb-0 treasury-compact-table" id="cashMovementsTable" data-register-table data-register-options='{"order":[[1,"asc"]],"columnDefs":[{"orderable":false,"targets":0}]}'>
                                     <thead class="table-dark">
                                         <tr>
                                             <th class="no-print" data-export-skip="1"></th>
@@ -329,7 +305,7 @@ $livreExcelUrl = APP_URL . '/treasury/caisse-excel?cash_account_id=' . (int)$com
                                                         <i class="bi bi-chevron-down"></i>
                                                     </button>
                                                 </td>
-                                                <td><?= formatDate($mouvement['operation_date']) ?></td>
+                                                <td data-order="<?= e($mouvement['operation_date']) ?>"><?= formatDate($mouvement['operation_date']) ?></td>
                                                 <td class="fw-semibold"><?= e($mouvement['reference_operation']) ?></td>
                                                 <td>
                                                     <span class="badge bg-<?= $mouvement['sens'] === 'entree' ? 'success' : 'danger' ?>">
@@ -359,13 +335,7 @@ $livreExcelUrl = APP_URL . '/treasury/caisse-excel?cash_account_id=' . (int)$com
                                     </tbody>
                                 </table>
                             </div>
-                            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 p-2 border-top no-print" data-pagination-for="cashMovementsTable">
-                                <div class="small text-muted" data-page-info></div>
-                                <div class="btn-group btn-group-sm">
-                                    <button type="button" class="btn btn-outline-secondary" data-page-prev><i class="bi bi-chevron-left"></i></button>
-                                    <button type="button" class="btn btn-outline-secondary" data-page-next><i class="bi bi-chevron-right"></i></button>
-                                </div>
-                            </div>
+
                         <?php endif; ?>
                     </div>
                 </div>
@@ -379,7 +349,7 @@ $livreExcelUrl = APP_URL . '/treasury/caisse-excel?cash_account_id=' . (int)$com
                             <?php treasuryUiEmptyState('bi-safe2', 'Aucune session de caisse trouvée', 'Ajustez les filtres ou ouvrez une journée de caisse.'); ?>
                         <?php else: ?>
                             <div class="table-responsive">
-                                <table class="table table-sm table-hover mb-0">
+                                <table class="table table-sm table-hover mb-0" id="tableHistoriqueCaisses" data-register-table data-register-order='[[0,"desc"]]' data-register-filter-columns='{"1":"Compte","7":"Statut"}'>
                                     <thead>
                                         <tr>
                                             <th>Date</th>
@@ -395,7 +365,7 @@ $livreExcelUrl = APP_URL . '/treasury/caisse-excel?cash_account_id=' . (int)$com
                                     <tbody>
                                         <?php foreach ($sessions as $session): ?>
                                             <tr>
-                                                <td><?= formatDate($session['session_date']) ?></td>
+                                                <td data-order="<?= e($session['session_date']) ?>"><?= formatDate($session['session_date']) ?></td>
                                                 <td><?= e($session['cash_account_nom']) ?></td>
                                                 <td><?= formatMontant((float)$session['opening_balance'], $session['currency']) ?></td>
                                                 <td class="text-success"><?= formatMontant((float)$session['cash_in'], $session['currency']) ?></td>
@@ -797,4 +767,5 @@ $livreExcelUrl = APP_URL . '/treasury/caisse-excel?cash_account_id=' . (int)$com
 })();
 </script>
 
+<?php $movementRegisterId = 'cashMovementsTable'; require __DIR__ . '/_register_movement.php'; ?>
 <?php require_once __DIR__ . '/../layouts/footer.php'; ?>

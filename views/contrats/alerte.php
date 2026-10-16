@@ -50,7 +50,7 @@
             <i class="bi bi-alarm me-2"></i>URGENT : Expirent dans moins de 7 jours
         </div>
         <div class="table-responsive">
-            <table class="table table-hover mb-0">
+            <table id="tableContratsAlerte1" class="table table-sm table-hover align-middle compact mb-0" data-register-table>
                 <thead class="table-light">
                     <tr><th>Partenaire</th><th>Objet</th><th>Valeur</th><th>Expire le</th><th>Reconduction</th><th>Actions</th></tr>
                 </thead>
@@ -91,7 +91,7 @@
             <i class="bi bi-exclamation-circle me-2"></i>Attention : Expirent dans 8–15 jours
         </div>
         <div class="table-responsive">
-            <table class="table table-hover mb-0">
+            <table id="tableContratsAlerte2" class="table table-sm table-hover align-middle compact mb-0" data-register-table>
                 <thead class="table-light">
                     <tr><th>Partenaire</th><th>Objet</th><th>Valeur</th><th>Expire le</th><th>Actions</th></tr>
                 </thead>
@@ -127,7 +127,7 @@
             <i class="bi bi-info-circle me-2 text-info"></i>À surveiller : Expirent dans 16–30 jours
         </div>
         <div class="table-responsive">
-            <table class="table table-hover mb-0">
+            <table id="tableContratsAlerte3" class="table table-sm table-hover align-middle compact mb-0" data-register-table>
                 <thead class="table-light">
                     <tr><th>Partenaire</th><th>Objet</th><th>Valeur</th><th>Expire le</th><th>Actions</th></tr>
                 </thead>

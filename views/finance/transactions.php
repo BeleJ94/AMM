@@ -21,9 +21,12 @@
 
     <?php afficherFlash(); ?>
 
-    <div class="card filter-card mb-4">
-        <div class="card-body">
-            <form method="GET" action="<?= APP_URL ?>/finance/transactions">
+    <div class="card section-card">
+        <div class="card-header bg-transparent border-0 fw-semibold">
+            <i class="bi bi-files me-2"></i><?= (int)$pagination['total'] ?> transaction(s)
+        </div>
+        <form data-register-filters method="GET" action="<?= APP_URL ?>/finance/transactions">
+                <input type="hidden" name="per_page" value="<?= (int)$parPage ?>">
                 <div class="row g-2 align-items-center">
                     <div class="col-md-2">
                         <select class="form-select form-select-sm" name="type_flux">
@@ -66,21 +69,11 @@
                     </div>
                 </div>
             </form>
-        </div>
-    </div>
 
-    <div class="card section-card">
-        <div class="card-header bg-transparent border-0 fw-semibold">
-            <i class="bi bi-files me-2"></i><?= (int)$pagination['total'] ?> transaction(s)
-        </div>
         <div class="card-body p-0">
-            <?php if (empty($transactions)): ?>
-                <div class="text-center py-5 text-muted">
-                    <i class="bi bi-cash-stack fs-3 d-block mb-2"></i>Aucune transaction trouvée
-                </div>
-            <?php else: ?>
+
             <div class="table-responsive">
-                <table class="table table-hover mb-0">
+                <table class="table table-sm table-hover mb-0" data-register-table data-register-mode="server" data-register-total="<?= (int)$pagination['total'] ?>" data-register-page-size="<?= (int)$parPage ?>">
                     <thead class="table-dark">
                         <tr>
                             <th>Réf</th>
@@ -97,7 +90,7 @@
                     </thead>
                     <tbody>
                         <?php foreach ($transactions as $t): ?>
-                            <tr>
+                            <tr data-register-state="<?= e($t['statut']) ?>" data-register-complete="false">
                                 <td class="fw-semibold"><?= e($t['reference_unique']) ?></td>
                                 <td><?= formatDate($t['date_operation']) ?></td>
                                 <td><span class="badge bg-<?= $t['type_flux'] === 'revenu' ? 'success' : 'danger' ?>"><?= e($t['type_flux']) ?></span></td>
@@ -105,7 +98,7 @@
                                 <td><?= e($t['compte_nom']) ?></td>
                                 <td><?= formatMontant((float)$t['montant'], $t['devise']) ?></td>
                                 <td><?= formatMontant((float)$t['montant_usd'], 'USD') ?></td>
-                                <td>
+                                <td data-register-state="<?= e($t['statut']) ?>">
                                     <?php
                                     $badge = 'secondary';
                                     if ($t['statut'] === 'valide') $badge = 'success';
@@ -151,16 +144,16 @@
                     </tbody>
                 </table>
             </div>
-            <?php endif; ?>
+
         </div>
 
         <?php if ($pagination['total_pages'] > 1): ?>
-            <div class="card-footer d-flex justify-content-end">
+            <div class="card-footer d-flex justify-content-end" data-register-pagination>
                 <nav>
                     <ul class="pagination pagination-sm mb-0">
                         <?php for ($p = 1; $p <= $pagination['total_pages']; $p++): ?>
                             <li class="page-item <?= $p == $pagination['page_courante'] ? 'active' : '' ?>">
-                                <a class="page-link" href="?<?= http_build_query(array_merge($filtres, ['page' => $p])) ?>"><?= $p ?></a>
+                                <a class="page-link" href="?<?= http_build_query(array_merge($filtres, ['page' => $p, 'per_page' => $parPage])) ?>"><?= $p ?></a>
                             </li>
                         <?php endfor; ?>
                     </ul>

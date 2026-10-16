@@ -55,6 +55,15 @@ class Document {
         $sql = "SELECT COUNT(*) FROM documents d WHERE d.parent_id IS NULL";
         $params = [];
 
+        if (!empty($filtres['service'])) {
+            $sql .= " AND d.service_proprietaire = ?";
+            $params[] = $filtres['service'];
+        }
+        if (!empty($filtres['projet'])) {
+            $sql .= " AND d.projet LIKE ?";
+            $params[] = '%' . $filtres['projet'] . '%';
+        }
+
         if (!empty($filtres['type_doc'])) {
             $sql .= " AND d.type_doc = ?";
             $params[] = $filtres['type_doc'];

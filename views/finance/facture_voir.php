@@ -45,7 +45,7 @@
                 <div class="card-header bg-transparent border-0 fw-semibold">Paiements</div>
                 <div class="card-body p-0">
                     <div class="table-responsive">
-                        <table class="table table-hover mb-0">
+                        <table class="table table-sm table-hover mb-0" data-register-table>
                             <thead class="table-light">
                                 <tr><th>Date</th><th>Montant</th><th>Référence</th><th>Commentaire</th></tr>
                             </thead>

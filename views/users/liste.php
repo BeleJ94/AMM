@@ -25,7 +25,7 @@
     <div class="card section-card">
         <div class="card-body p-0">
             <div class="table-responsive">
-                <table id="tableUsers" class="table table-hover mb-0">
+                <table id="tableUsers" class="table table-sm table-hover align-middle compact mb-0" data-register-table data-register-order='[[0,"desc"]]' data-register-filter-columns='[{"index":6,"label":"Statut"},{"index":3,"label":"Rôle"},{"index":4,"label":"Service"}]'>
                     <thead class="table-dark">
                         <tr>
                             <th>#</th>
@@ -41,7 +41,7 @@
                     </thead>
                     <tbody>
                         <?php foreach ($users as $u): ?>
-                            <tr class="<?= $u['actif'] ? '' : 'table-secondary' ?>">
+                            <tr class="<?= $u['actif'] ? '' : 'table-secondary' ?>" data-register-state="<?= $u['actif'] ? 'actif' : 'inactif' ?>" data-register-complete="false">
                                 <td><?= $u['id'] ?></td>
                                 <td class="fw-semibold"><?= e($u['nom']) ?></td>
                                 <td><a href="mailto:<?= e($u['email']) ?>"><?= e($u['email']) ?></a></td>
@@ -81,7 +81,7 @@
                                 </td>
                                 <td><?= e($u['service'] ?? '—') ?></td>
                                 <td><?= e($u['telephone'] ?? '—') ?></td>
-                                <td>
+                                <td data-register-state="<?= $u['actif'] ? 'actif' : 'inactif' ?>">
                                     <?php if ($u['actif']): ?>
                                         <span class="badge bg-success"><i class="bi bi-circle-fill me-1" style="font-size:0.5rem;"></i>Actif</span>
                                     <?php else: ?>
@@ -112,19 +112,5 @@
         </div>
     </div>
 </div>
-
-<script>
-$(document).ready(function() {
-    $('#tableUsers').DataTable({
-        language: {
-            url: '//cdn.datatables.net/plug-ins/1.13.4/i18n/fr-FR.json'
-        },
-        order: [[0, 'desc']],
-        columnDefs: [
-            { orderable: false, targets: 8 }
-        ]
-    });
-});
-</script>
 
 <?php require_once __DIR__ . '/../layouts/footer.php'; ?>

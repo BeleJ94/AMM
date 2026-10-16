@@ -10,7 +10,7 @@ $pdo = getDB();
 $root = realpath(__DIR__ . '/..');
 $tag = 'HTTPREQ-' . bin2hex(random_bytes(6));
 $tempDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . strtolower($tag);
-$users = []; $sessions = []; $requestIds = []; $temporaryFiles = []; $departments = [];
+$users = []; $sessions = []; $requestIds = []; $temporaryFiles = []; $departments = []; $auditIds = [];
 $process = null; $checks = 0; $baseUrl = ''; $exitCode = 0;
 
 function httpRequestAssert(bool $condition, string $message): void {
@@ -252,6 +252,48 @@ try {
     $assigned=$pdo->prepare('SELECT service_id,service FROM users WHERE id=?');$assigned->execute([$users['agentB']['id']]);$assignment=$assigned->fetch();
     httpRequestAssert($userPost['status']===302 && (int)$assignment['service_id']===$newDepartment && $assignment['service']===$newName,'Affectation utilisateur non synchronisée.');
 
+    // Journal d'audit : droits, données historiques, identité figée et exports filtrés.
+    require_once __DIR__.'/../includes/functions.php';
+    require_once __DIR__.'/../models/AuditLog.php';
+    $snapshotAction=$tag.'-AUDIT-SNAPSHOT Validation';
+    $_SESSION=['user_id'=>$users['agentA']['id'],'user_nom'=>$users['agentA']['nom'],'user_role'=>'agent','user_service'=>$renameName];
+    $_SERVER['REMOTE_ADDR']='127.0.0.1'; $_GET['url']='treasury/demande-valider/'.$main;
+    logAudit($snapshotAction,'treasury_fund_requests',$main,json_encode(['commentaire'=>'Trace de test','password'=>'NE-PAS-AFFICHER-'.$tag,'nested'=>['csrf_token'=>'SECRET-'.$tag]],JSON_UNESCAPED_UNICODE));
+    $snapshotId=(int)$pdo->lastInsertId();$auditIds[]=$snapshotId;
+    $stored=$pdo->prepare('SELECT details FROM audit_logs WHERE id=?');$stored->execute([$snapshotId]);$metadata=(string)$stored->fetchColumn();
+    httpRequestAssert(str_contains($metadata,'_audit_version') && !str_contains($metadata,'NE-PAS-AFFICHER-') && !str_contains($metadata,'SECRET-'),'Métadonnées absentes ou secret enregistré.');
+    $insertLog=$pdo->prepare('INSERT INTO audit_logs (user_id,action,table_name,record_id,ip_address,details,created_at) VALUES (?,?,?,?,?,?,?)');
+    foreach ([['Création '.$tag.'-AUDIT-LEGACY','2001-01-02 23:59:59','Texte historique'],['Création '.$tag.'-AUDIT-LEGACY','2001-01-03 00:00:00','Hors période'],['=2+3 '.$tag.'-AUDIT-CSV',date('Y-m-d H:i:s'),'Export sécurisé'],['<img src=x onerror=alert(1)> '.$tag.'-AUDIT-XSS',date('Y-m-d H:i:s'),json_encode(['password'=>'ANCIEN-SECRET-'.$tag])]] as [$action,$date,$detail]) {
+        $insertLog->execute([$users['agentA']['id'],$action,'documents',$main,'127.0.0.1',$detail,$date]);$auditIds[]=(int)$pdo->lastInsertId();
+    }
+    $insertLog->execute([null,'Tentative de connexion échouée pour: '.$tag,'users',null,'127.0.0.1',null,date('Y-m-d H:i:s')]);$anonymousId=(int)$pdo->lastInsertId();$auditIds[]=$anonymousId;
+    $modelAudit=new AuditLog();
+    httpRequestAssert((int)$modelAudit->statistiques(['recherche'=>$tag.'-AUDIT-LEGACY','date_debut'=>'2001-01-02','date_fin'=>'2001-01-02'])['total']===1,'Borne de fin de journée incorrecte.');
+    httpRequestAssert((int)$modelAudit->statistiques(['recherche'=>$tag,'user_id'=>'anonyme','type'=>'echec'])['total']===1,'Échec de connexion anonyme absent.');
+    $pdo->prepare('UPDATE users SET nom=? WHERE id=?')->execute([$tag.' Nom actuel différent',$users['agentA']['id']]);
+    $snapshot=$modelAudit->lister(['recherche'=>$tag.'-AUDIT-SNAPSHOT','user_id'=>(string)$users['agentA']['id'],'module'=>'treasury','record_id'=>$main]);
+    httpRequestAssert(count($snapshot)===1 && $snapshot[0]['acteur_nom']===$users['agentA']['nom'],'Identité historique réécrite après renommage du compte.');
+    httpRequestAssert($modelAudit->statistiques(['recherche'=>"' OR 1=1 -- ".$tag])['total']==0,'Recherche non paramétrée.');
+    $logQuery='?periode=tout&recherche='.rawurlencode($tag);
+    $journal=httpRequestCall('admin','/admin-logs'.$logQuery);
+    httpRequestAssert($journal['status']===200 && str_contains($journal['body'],'Journal des utilisateurs') && str_contains($journal['body'],$snapshotAction),'Journal administrateur inaccessible.');
+    httpRequestAssert(str_contains($journal['body'],'Texte historique') && str_contains($journal['body'],'&lt;img src=x') && !str_contains($journal['body'],'<img src=x') && !str_contains($journal['body'],'ANCIEN-SECRET-'),'Compatibilité historique, échappement ou masquage incorrect.');
+    foreach (['agentA','daf','auditeur'] as $role) httpRequestAssert(httpRequestCall($role,'/admin-logs'.$logQuery)['status']===302,'Journal accessible à '.$role);
+    $sessions['guest']=['id'=>bin2hex(random_bytes(16)),'csrf'=>''];
+    httpRequestAssert(httpRequestCall('guest','/admin-logs')['status']===302,'Journal accessible sans connexion.');
+    $invalidLog=httpRequestCall('admin','/admin-logs?date_debut=2026-02-30');
+    httpRequestAssert($invalidLog['status']===422 && str_contains($invalidLog['body'],'invalide'),'Date invalide acceptée.');
+    $filteredLog=httpRequestCall('admin','/admin-logs?periode=tout&module=treasury&user_id='.$users['agentA']['id'].'&recherche='.rawurlencode($tag.'-AUDIT-SNAPSHOT'));
+    httpRequestAssert($filteredLog['status']===200 && str_contains($filteredLog['body'],$snapshotAction) && !str_contains($filteredLog['body'],$tag.'-AUDIT-LEGACY'),'Filtres utilisateur et module incorrects.');
+    $readonly=httpRequestCall('admin','/admin-logs',['action'=>'supprimer','id'=>$snapshotId]);
+    httpRequestAssert($readonly['status']===405 && count($modelAudit->lister(['recherche'=>$tag.'-AUDIT-SNAPSHOT']))===1,'Journal modifiable par POST.');
+    $csv=httpRequestCall('admin','/admin-logs?periode=tout&export=csv&recherche='.rawurlencode($tag.'-AUDIT-CSV'));
+    httpRequestAssert($csv['status']===200 && str_contains($csv['headers']['content-type']??'','text/csv') && str_starts_with($csv['body'],"\xEF\xBB\xBF") && str_contains($csv['body'],"'=2+3"),'Export CSV absent ou formule non neutralisée.');
+    $exportLog=$modelAudit->statistiques(['user_id'=>(string)$users['admin']['id'],'recherche'=>'Export du journal des utilisateurs','type'=>'consultation']);
+    httpRequestAssert((int)$exportLog['total']>0,'Export du journal non tracé.');
+    $pageLog=httpRequestCall('admin','/admin-logs?periode=tout&par_page=25&page=99999');
+    httpRequestAssert($pageLog['status']===200 && str_contains($pageLog['body'],'Pagination du journal'),'Pagination hors limites non gérée.');
+
     echo json_encode(['status'=>'ok','checks'=>$checks,'base_url'=>$baseUrl,'request_id'=>$main],JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE).PHP_EOL;
     foreach ($argv as $arg) {
         if (!preg_match('/^--preview-seconds=(\d+)$/',$arg,$match)) continue;
@@ -280,6 +322,7 @@ try {
         $pdo->prepare('DELETE FROM notifications WHERE lien=?')->execute([$baseUrl.'/treasury/demande-voir/'.$id]);
         $pdo->prepare('DELETE FROM treasury_fund_requests WHERE id=?')->execute([$id]);
     }
+    foreach ($auditIds as $auditId) $pdo->prepare('DELETE FROM audit_logs WHERE id=?')->execute([$auditId]);
     foreach ($users as $user) {
         $pdo->prepare('DELETE FROM notifications WHERE user_id=?')->execute([$user['id']]);
         $pdo->prepare('DELETE FROM audit_logs WHERE user_id=?')->execute([$user['id']]);

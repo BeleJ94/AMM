@@ -117,7 +117,7 @@ $startDow = (int)date('N', strtotime($firstDay));
                 <i class="bi bi-calendar-week me-2"></i>Semaine du <?= formatDate($debutSemaine) ?> au <?= formatDate($finSemaine) ?>
             </div>
             <div class="card-body p-0">
-                <table class="table table-sm table-hover mb-0">
+                <table id="tableProjetSemaine" class="table table-sm table-hover align-middle compact mb-0" data-register-table data-register-filter-columns='{"1":"Type","4":"Statut","2":"Projet"}'>
                     <thead class="table-light">
                         <tr><th>Date</th><th>Type</th><th>Projet</th><th>Titre</th><th>Statut</th></tr>
                     </thead>
@@ -130,12 +130,12 @@ $startDow = (int)date('N', strtotime($firstDay));
                             }
                             $rows++;
                         ?>
-                            <tr>
+                            <tr data-register-state="<?= e($ev['statut']) ?>" data-register-complete="<?= in_array($ev['statut'], ['termine', 'atteint'], true) ? 'true' : 'false' ?>">
                                 <td><?= formatDate($ev['date_event']) ?></td>
                                 <td><span class="badge bg-secondary"><?= e($ev['type']) ?></span></td>
                                 <td><a href="<?= APP_URL ?>/projets/voir/<?= (int)$ev['project_id'] ?>" class="text-decoration-none"><?= e($ev['projet_titre']) ?></a></td>
                                 <td><?= e($ev['titre']) ?></td>
-                                <td><?= e($ev['statut']) ?></td>
+                                <td data-register-state="<?= e($ev['statut']) ?>"><?= e($ev['statut']) ?></td>
                             </tr>
                         <?php endforeach; ?>
                         <?php if ($rows === 0): ?>

@@ -54,6 +54,15 @@ class Contrat {
             $sql .= " AND statut = ?";
             $params[] = $filtres['statut'];
         }
+        if (!empty($filtres['devise'])) {
+            $sql .= " AND devise = ?";
+            $params[] = $filtres['devise'];
+        }
+        if (!empty($filtres['recherche'])) {
+            $sql .= " AND (partenaire LIKE ? OR objet LIKE ?)";
+            $term = '%' . $filtres['recherche'] . '%';
+            $params = array_merge($params, [$term, $term]);
+        }
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute($params);
         return (int)$stmt->fetchColumn();

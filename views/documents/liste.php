@@ -22,18 +22,21 @@
 
     <?php afficherFlash(); ?>
 
-    <!-- Filtres -->
-    <div class="card filter-card mb-4">
-        <div class="card-body">
-            <form method="GET" action="<?= APP_URL ?>/documents/liste">
+    <!-- Tableau des documents -->
+    <div class="card section-card">
+        <div class="card-header bg-transparent border-0 fw-semibold">
+            <i class="bi bi-files me-2"></i><?= $pagination['total'] ?> document(s)
+        </div>
+        <div class="card-body border-bottom py-2">
+            <form data-register-filters method="GET" action="<?= APP_URL ?>/documents/liste">
                 <div class="row g-2 align-items-center">
                     <div class="col-md-4">
-                        <input type="text" class="form-control form-control-sm" name="recherche"
+                        <input type="text" class="form-control form-control-sm" name="recherche" aria-label="Rechercher"
                                placeholder="Rechercher par titre, description, tags..."
                                value="<?= e($filtres['recherche']) ?>">
                     </div>
                     <div class="col-md-3">
-                        <select class="form-select form-select-sm" name="type_doc">
+                        <select class="form-select form-select-sm" name="type_doc" aria-label="Type de document">
                             <option value="">Tous les types</option>
                             <?php foreach (['contrat','licence','rapport','facture','procès-verbal','autre'] as $t): ?>
                                 <option value="<?= $t ?>" <?= $filtres['type_doc'] === $t ? 'selected' : '' ?>><?= ucfirst($t) ?></option>
@@ -41,34 +44,23 @@
                         </select>
                     </div>
                     <div class="col-md-3">
-                        <input type="text" class="form-control form-control-sm" name="service"
+                        <input type="text" class="form-control form-control-sm" name="service" aria-label="Service"
                                placeholder="Filtrer par service..."
                                value="<?= e($filtres['service']) ?>">
                     </div>
                     <div class="col-md-2">
                         <div class="d-flex gap-1">
-                            <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-search"></i></button>
-                            <a href="<?= APP_URL ?>/documents/liste" class="btn btn-outline-secondary btn-sm"><i class="bi bi-x"></i></a>
+                            <button type="submit" title="Appliquer les filtres" aria-label="Appliquer les filtres" class="btn btn-primary btn-sm w-100"><i class="bi bi-search"></i></button>
+                            <a href="<?= APP_URL ?>/documents/liste" title="Effacer les filtres" aria-label="Effacer les filtres" class="btn btn-outline-secondary btn-sm"><i class="bi bi-x"></i></a>
                         </div>
                     </div>
                 </div>
             </form>
         </div>
-    </div>
-
-    <!-- Tableau des documents -->
-    <div class="card section-card">
-        <div class="card-header bg-transparent border-0 fw-semibold">
-            <i class="bi bi-files me-2"></i><?= $pagination['total'] ?> document(s)
-        </div>
         <div class="card-body p-0">
-            <?php if (empty($documents)): ?>
-                <div class="text-center py-5 text-muted">
-                    <i class="bi bi-folder fs-3 d-block mb-2"></i>Aucun document trouvé
-                </div>
-            <?php else: ?>
+
             <div class="table-responsive">
-                <table id="tableDocuments" class="table table-hover mb-0">
+                <table id="tableDocuments" class="table table-sm table-hover align-middle compact mb-0" data-register-table data-register-mode="server" data-register-total="<?= (int)$pagination['total'] ?>">
                     <thead class="table-dark">
                         <tr>
                             <th>Titre</th>
@@ -165,17 +157,16 @@
                     </tbody>
                 </table>
             </div>
-            <?php endif; ?>
         </div>
 
         <!-- Pagination -->
         <?php if ($pagination['total_pages'] > 1): ?>
-            <div class="card-footer d-flex justify-content-end">
+            <div class="card-footer d-flex justify-content-end" data-register-pagination>
                 <nav>
                     <ul class="pagination pagination-sm mb-0">
                         <?php for ($p = 1; $p <= $pagination['total_pages']; $p++): ?>
                             <li class="page-item <?= $p == $pagination['page_courante'] ? 'active' : '' ?>">
-                                <a class="page-link" href="?<?= http_build_query(array_merge($filtres, ['page' => $p])) ?>"><?= $p ?></a>
+                                <a class="page-link" href="?<?= http_build_query(array_merge($filtres, ['page' => $p, 'per_page' => $parPage])) ?>"><?= $p ?></a>
                             </li>
                         <?php endfor; ?>
                     </ul>
@@ -212,16 +203,6 @@
 
 <script>
 $(document).ready(function() {
-    if ($('#tableDocuments').length) {
-        $('#tableDocuments').DataTable({
-            paging: false,
-            info: false,
-            searching: false,
-            language: { url: '//cdn.datatables.net/plug-ins/1.13.4/i18n/fr-FR.json' },
-            columnDefs: [{ orderable: false, targets: 7 }]
-        });
-    }
-
     const modalDocument = document.getElementById('modalApercuDocument');
     if (modalDocument) {
         modalDocument.addEventListener('show.bs.modal', function(event) {
