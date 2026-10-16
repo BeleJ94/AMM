@@ -24,6 +24,7 @@ class UserController {
      */
     public function ajouter(): void {
         $erreurs = [];
+        $departements = (new Department())->lister(false);
 
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!validerTokenCSRF($_POST['csrf_token'] ?? '')) {
@@ -39,6 +40,7 @@ class UserController {
                 ];
 
                 // Validation
+                $this->rattacherDepartement($donnees, $erreurs);
                 if (empty($donnees['nom']))      $erreurs[] = "Le nom est obligatoire.";
                 if (empty($donnees['email']))     $erreurs[] = "L'email est obligatoire.";
                 if (empty($donnees['password']))  $erreurs[] = "Le mot de passe est obligatoire.";
@@ -72,6 +74,7 @@ class UserController {
         }
 
         $erreurs = [];
+        $departements = (new Department())->lister(false);
 
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!validerTokenCSRF($_POST['csrf_token'] ?? '')) {
@@ -85,6 +88,7 @@ class UserController {
                     'telephone' => trim($_POST['telephone'] ?? ''),
                 ];
 
+                $this->rattacherDepartement($donnees, $erreurs, (int)($user['service_id'] ?? 0));
                 if (empty($donnees['nom']))  $erreurs[] = "Le nom est obligatoire.";
                 if (empty($donnees['email'])) $erreurs[] = "L'email est obligatoire.";
                 if (!filter_var($donnees['email'], FILTER_VALIDATE_EMAIL)) $erreurs[] = "Email invalide.";
@@ -92,7 +96,7 @@ class UserController {
                 if ($this->userModel->emailExiste($donnees['email'], $id)) $erreurs[] = "Email déjà utilisé.";
 
                 // Changer le mot de passe si fourni
-                if (!empty($_POST['nouveau_mdp'])) {
+                if (empty($erreurs) && !empty($_POST['nouveau_mdp'])) {
                     $this->userModel->changerMotDePasse($id, $_POST['nouveau_mdp']);
                 }
 
@@ -111,6 +115,16 @@ class UserController {
     /**
      * Activer / Désactiver un utilisateur.
      */
+    private function rattacherDepartement(array &$donnees, array &$erreurs, int $actuel = 0): void {
+        $id = max(0, (int)($_POST['service_id'] ?? 0));
+        $departement = $id ? (new Department())->trouver($id) : null;
+        if ($id && (!$departement || (!$departement['actif'] && $id !== $actuel))) {
+            $erreurs[] = 'Sélectionnez un département actif.';
+        }
+        $donnees['service_id'] = $departement ? (int)$departement['id'] : null;
+        $donnees['service'] = $departement['nom'] ?? null;
+    }
+
     public function toggleActif(?string $id): void {
         if (empty($id)) { redirect('/users/liste'); }
         $id = (int)$id;

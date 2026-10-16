@@ -40,13 +40,15 @@
         set('requestSummaryAmount', money(value, currency.value));
         set('requestSummaryEquivalent', isCDF ? (exchange > 0 ? 'Équivalent : ' + money(value / exchange, 'USD') : 'Renseignez le taux pour calculer la contre-valeur USD.') : 'Montant de référence en USD');
         set('requestSummaryRate', isCDF && exchange > 0 ? '1 USD = ' + money(exchange, 'CDF') : '');
-        set('requestSummaryDepartment', document.getElementById('departmentField').value.trim() || '—');
+        var departmentField = document.getElementById('departmentField');
+        set('requestSummaryDepartment', departmentField.value ? departmentField.options[departmentField.selectedIndex].text : '—');
         set('requestSummaryBeneficiary', document.getElementById('beneficiaryField').value.trim() || '—');
         set('requestSummaryItemCount', String(rows.children.length));
         document.getElementById('addRequestItem').disabled = rows.children.length >= 100;
         rows.querySelector('[data-item="unit_price"]').setCustomValidity(value > 0 ? '' : 'Le montant total de la demande doit être supérieur à zéro.');
     }
     form.addEventListener('input', total);
+    form.addEventListener('change', total);
     currency.addEventListener('change', total);
     document.getElementById('addRequestItem').addEventListener('click', function () {
         if (rows.children.length >= 100) return;
@@ -76,7 +78,8 @@
         if (event.submitter && event.submitter.dataset.requestAction) action = event.submitter.dataset.requestAction;
         set('confirmRequestAmount', document.getElementById('requestSummaryAmount').textContent);
         set('confirmRequestEquivalent', document.getElementById('requestSummaryEquivalent').textContent);
-        set('confirmDepartment', document.getElementById('departmentField').value.trim());
+        var departmentField = document.getElementById('departmentField');
+        set('confirmDepartment', departmentField.value ? departmentField.options[departmentField.selectedIndex].text : '—');
         set('confirmBeneficiary', document.getElementById('beneficiaryField').value.trim());
         set('confirmObject', document.getElementById('objectField').value.trim());
         set('confirmRequestNotice', action === 'submit' ? 'La demande sera transmise au Trésorier A pour contrôle, puis au Comptable senior. Les décisions seront consultables dans le suivi.' : 'La demande sera enregistrée en brouillon. Vous pourrez la consulter et la soumettre ultérieurement.');

@@ -16,6 +16,13 @@ function verifierSession(): void {
     if (empty($_SESSION['user_id'])) {
         redirect('/');
     }
+    // Actualiser le rattachement, y compris après une modification du référentiel.
+    $stmt = getDB()->prepare('SELECT u.service_id, COALESCE(s.nom,u.service) AS service FROM users u LEFT JOIN services s ON s.id=u.service_id WHERE u.id=?');
+    $stmt->execute([(int)$_SESSION['user_id']]);
+    if ($rattachement = $stmt->fetch()) {
+        $_SESSION['user_service_id'] = $rattachement['service_id'] !== null ? (int)$rattachement['service_id'] : null;
+        $_SESSION['user_service'] = $rattachement['service'];
+    }
 }
 
 /**
@@ -67,7 +74,9 @@ function accesGlobalDemandesFonds(): bool {
 function perimetreDemandesFonds(): array {
     if (accesGlobalDemandesFonds()) return [];
     $service = trim((string)($_SESSION['user_service'] ?? ''));
-    if (($_SESSION['user_role'] ?? '') === 'chef_service' && $service !== '') return ['department' => $service];
+    if (($_SESSION['user_role'] ?? '') === 'chef_service' && $service !== '') {
+        return !empty($_SESSION['user_service_id']) ? ['department_id'=>(int)$_SESSION['user_service_id'], 'department'=>$service] : ['department'=>$service];
+    }
     return ['created_by' => (int)($_SESSION['user_id'] ?? 0)];
 }
 

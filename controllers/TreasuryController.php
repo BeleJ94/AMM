@@ -715,15 +715,21 @@ class TreasuryController {
         $accesDepartement = !accesGlobalDemandesFonds();
         $categories = $this->financeModel->listerCategories('depense');
         $comptes = $accesDepartement ? [] : $this->financeModel->listerComptes();
+        $departementModel = new Department();
+        $departements = $departementModel->lister();
+        $departementAffecte = !empty($_SESSION['user_service_id']) ? $departementModel->trouver((int)$_SESSION['user_service_id']) : $departementModel->trouverParNom((string)($_SESSION['user_service'] ?? ''));
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!validerTokenCSRF($_POST['csrf_token'] ?? '')) {
                 $erreurs[] = 'La session du formulaire a expiré. Veuillez réessayer.';
             } else {
-                $department = $accesDepartement ? trim((string)($_SESSION['user_service'] ?? '')) : trim((string)($_POST['department'] ?? ''));
+                $selection = $accesDepartement ? $departementAffecte : $departementModel->trouver((int)($_POST['department_id'] ?? 0));
+                $department = $selection['nom'] ?? '';
+                if (!$selection || !$selection['actif']) $erreurs[] = 'Sélectionnez un département actif dans le référentiel. Si votre affectation est inactive, contactez l’administrateur.';
                 $requester = $accesDepartement ? trim((string)($_SESSION['user_nom'] ?? '')) : trim((string)($_POST['requester_name'] ?? $_SESSION['user_nom'] ?? ''));
                 $donnees = [
                     'request_date' => $_POST['request_date'] ?? date('Y-m-d'),
                     'department' => $department,
+                    'department_id' => $selection ? (int)$selection['id'] : null,
                     'requester_name' => $requester,
                     'beneficiary' => trim((string)($_POST['beneficiary'] ?? '')),
                     'objet' => trim((string)($_POST['objet'] ?? '')),
@@ -772,7 +778,7 @@ class TreasuryController {
                 }
             }
         }
-        $this->render('demande_ajouter', compact('erreurs', 'categories', 'comptes', 'accesDepartement'));
+        $this->render('demande_ajouter', compact('erreurs', 'categories', 'comptes', 'accesDepartement', 'departements', 'departementAffecte'));
     }
     public function voirDemande(?string $id): void {
         verifierSession();
@@ -2503,7 +2509,8 @@ class TreasuryController {
         $perimetre = perimetreDemandesFonds();
         $autorise = $demande && (empty($perimetre)
             || (isset($perimetre['created_by']) && (int)$demande['created_by'] === $perimetre['created_by'])
-            || (isset($perimetre['department']) && (string)($demande['department'] ?? '') === $perimetre['department']));
+            || (isset($perimetre['department_id']) && (int)($demande['department_id'] ?? 0) === $perimetre['department_id'])
+            || (empty($demande['department_id']) && isset($perimetre['department']) && (string)($demande['department'] ?? '') === $perimetre['department']));
         if (!$autorise) {
             flashMessage('erreur', 'Cette demande est introuvable ou en dehors de votre périmètre.');
             redirect('/treasury/demandes');

@@ -3,9 +3,9 @@ $pageTitle = 'Nouvelle demande de fonds - ' . APP_NAME;
 require_once __DIR__ . '/../layouts/header.php';
 $postedItems = isset($_POST['items']) && is_array($_POST['items']) ? array_values($_POST['items']) : [];
 if (!$postedItems) $postedItems = [['description' => '', 'quantity' => '1', 'unit_price' => '']];
-$departmentValue = !empty($accesDepartement) ? ($_SESSION['user_service'] ?? '') : ($_POST['department'] ?? $departementDemandeur ?? $_SESSION['user_service'] ?? '');
+$departmentId = !empty($accesDepartement) ? (int)($departementAffecte['id'] ?? 0) : (int)($_POST['department_id'] ?? $departementAffecte['id'] ?? 0);
 $requesterValue = !empty($accesDepartement) ? ($_SESSION['user_nom'] ?? '') : ($_POST['requester_name'] ?? $nomDemandeur ?? $_SESSION['user_nom'] ?? '');
-$departmentMissing = !empty($accesDepartement) && trim((string)$departmentValue) === '';
+$departmentMissing = !empty($accesDepartement) && (!$departementAffecte || !$departementAffecte['actif']);
 ?>
 <link rel="stylesheet" href="<?= APP_URL ?>/assets/css/treasury-requests.css">
 <div class="container-fluid tr-page">
@@ -14,7 +14,7 @@ $departmentMissing = !empty($accesDepartement) && trim((string)$departmentValue)
         <span class="tr-status"><i class="bi bi-pencil-square"></i> Nouvelle demande</span>
     </div>
     <?php afficherFlash(); ?>
-    <?php if ($departmentMissing): ?><div class="alert alert-warning" role="alert"><i class="bi bi-building-exclamation me-2"></i>Votre département n’est pas renseigné. Contactez un administrateur pour compléter votre profil avant de créer une demande.</div><?php endif; ?>
+    <?php if ($departmentMissing): ?><div class="alert alert-warning" role="alert"><i class="bi bi-building-exclamation me-2"></i>Votre département n’est pas renseigné ou est inactif. Contactez un administrateur pour mettre à jour votre affectation avant de créer une demande.</div><?php endif; ?>
     <?php if (!empty($erreurs)): ?><div class="alert alert-danger" role="alert"><strong>Vérifiez les informations suivantes :</strong><ul class="mb-0 mt-2"><?php foreach ($erreurs as $erreur): ?><li><?= e($erreur) ?></li><?php endforeach; ?></ul></div><?php endif; ?>
     <form id="demandeFondsForm" method="POST" action="<?= APP_URL ?>/treasury/demande-ajouter" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="<?= genererTokenCSRF() ?>"><input type="hidden" name="soumettre" id="submitRequestField" value="">
@@ -23,7 +23,7 @@ $departmentMissing = !empty($accesDepartement) && trim((string)$departmentValue)
                 <section class="card tr-card mb-4" aria-labelledby="requestGeneralTitle">
                     <div class="tr-section-heading"><span class="tr-section-number">01</span><div><h2 id="requestGeneralTitle">Informations générales</h2><p>Identifiez le département et le bénéficiaire de la demande.</p></div></div>
                     <div class="card-body p-4 pt-0"><div class="row g-3">
-                        <div class="col-md-6"><label for="departmentField" class="form-label">Département demandeur <span class="text-danger">*</span></label><input id="departmentField" class="form-control" type="text" name="department" maxlength="100" value="<?= e($departmentValue) ?>" required <?= !empty($accesDepartement) ? 'readonly' : '' ?> placeholder="Ex. Ressources humaines"></div>
+                        <div class="col-md-6"><label for="departmentField" class="form-label">Département demandeur <span class="text-danger">*</span></label><select id="departmentField" class="form-select" name="department_id" required <?= !empty($accesDepartement) ? 'disabled' : '' ?>><option value="">Sélectionner un département</option><?php foreach ($departements as $departement): ?><?php if (!empty($accesDepartement) && (int)$departement['id'] !== $departmentId) continue; ?><option value="<?= (int)$departement['id'] ?>" <?= (int)$departement['id'] === $departmentId ? 'selected' : '' ?>><?= e($departement['nom']) ?></option><?php endforeach; ?><?php if (!empty($accesDepartement) && $departementAffecte && !$departementAffecte['actif']): ?><option value="<?= $departmentId ?>" selected><?= e($departementAffecte['nom']) ?> · Inactif</option><?php endif; ?></select><div class="form-text"><?php if (!empty($accesDepartement)): ?>Votre département est fixé par votre affectation utilisateur.<?php elseif (($_SESSION['user_role'] ?? '') === 'admin'): ?><a href="<?= APP_URL ?>/admin-departements" target="_blank" rel="noopener">Gérer les départements</a> · Actualisez la page après un ajout.<?php else: ?>Liste des départements actifs de l’organisation.<?php endif; ?></div></div>
                         <div class="col-md-6"><label for="requesterField" class="form-label">Nom du demandeur <span class="text-danger">*</span></label><input id="requesterField" class="form-control" type="text" name="requester_name" maxlength="150" value="<?= e($requesterValue) ?>" required <?= !empty($accesDepartement) ? 'readonly' : '' ?>></div>
                         <div class="col-md-4"><label for="requestDate" class="form-label">Date <span class="text-danger">*</span></label><input id="requestDate" type="date" class="form-control" name="request_date" value="<?= e($_POST['request_date'] ?? date('Y-m-d')) ?>" required></div>
                         <div class="col-md-4"><label for="beneficiaryField" class="form-label">Bénéficiaire <span class="text-danger">*</span></label><input id="beneficiaryField" type="text" class="form-control" name="beneficiary" maxlength="200" value="<?= e($_POST['beneficiary'] ?? '') ?>" placeholder="Personne ou fournisseur" required></div>

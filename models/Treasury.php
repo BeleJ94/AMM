@@ -546,8 +546,8 @@ class Treasury {
             "INSERT INTO treasury_fund_requests
              (request_number, request_date, beneficiary, objet, description, amount, currency,
               exchange_rate, amount_usd, category_id, preferred_account_id, urgency,
-              justification_file, document_id, status, created_by, department, requester_name, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'brouillon', ?, ?, ?, NOW())"
+              justification_file, document_id, status, created_by, department, requester_name, department_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'brouillon', ?, ?, ?, ?, NOW())"
         );
 
         $stmt->execute([
@@ -568,6 +568,7 @@ class Treasury {
             $donnees['created_by'] ?? null,
             trim((string)($donnees['department'] ?? '')) ?: null,
             trim((string)($donnees['requester_name'] ?? '')) ?: null,
+            !empty($donnees['department_id']) ? (int)$donnees['department_id'] : null,
         ]);
         $id = (int)$this->pdo->lastInsertId();
         if ($lignes !== null) {
@@ -1961,7 +1962,11 @@ class Treasury {
             $sql .= " AND r.created_by = ?";
             $params[] = (int)$filtres['created_by'];
         }
-        if (!empty($filtres['department'])) {
+        if (!empty($filtres['department_id'])) {
+            $sql .= ' AND (r.department_id=? OR (r.department_id IS NULL AND r.department=?))';
+            $params[] = (int)$filtres['department_id'];
+            $params[] = (string)($filtres['department'] ?? '');
+        } elseif (!empty($filtres['department'])) {
             $sql .= " AND r.department = ?";
             $params[] = (string)$filtres['department'];
         }

@@ -59,8 +59,8 @@ class User {
      */
     public function creer(array $donnees): int {
         $stmt = $this->pdo->prepare(
-            "INSERT INTO users (nom, email, password, role, service, telephone, actif, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, 1, NOW())"
+            "INSERT INTO users (nom, email, password, role, service, service_id, telephone, actif, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 1, NOW())"
         );
         $stmt->execute([
             $donnees['nom'],
@@ -68,6 +68,7 @@ class User {
             $donnees['password'], // Stocké en clair (TODO: password_hash)
             $donnees['role'],
             $donnees['service'] ?? null,
+            $donnees['service_id'] ?? null,
             $donnees['telephone'] ?? null,
         ]);
         return (int)$this->pdo->lastInsertId();
@@ -79,7 +80,7 @@ class User {
     public function modifier(int $id, array $donnees): bool {
         $stmt = $this->pdo->prepare(
             "UPDATE users
-             SET nom = ?, email = ?, role = ?, service = ?, telephone = ?
+             SET nom = ?, email = ?, role = ?, service = ?, service_id = ?, telephone = ?
              WHERE id = ?"
         );
         return $stmt->execute([
@@ -87,6 +88,7 @@ class User {
             $donnees['email'],
             $donnees['role'],
             $donnees['service'] ?? null,
+            $donnees['service_id'] ?? null,
             $donnees['telephone'] ?? null,
             $id,
         ]);

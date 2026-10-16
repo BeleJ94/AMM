@@ -84,9 +84,14 @@ $pageTitle = ($estModification ? 'Modifier' : 'Ajouter') . ' un utilisateur — 
                             <!-- Service -->
                             <div class="col-md-6">
                                 <label class="form-label fw-semibold">Service / Département</label>
-                                <input type="text" class="form-control" name="service"
-                                       placeholder="ex: Trésorerie, Comptabilité, Direction financière..."
-                                       value="<?= e($user['service'] ?? $_POST['service'] ?? '') ?>">
+                                <select class="form-select" name="service_id" aria-label="Département de l’utilisateur">
+                                    <option value="">Non affecté</option>
+                                    <?php $serviceSelectionne = (int)($_POST['service_id'] ?? $user['service_id'] ?? 0); ?>
+                                    <?php foreach ($departements as $departement): ?>
+                                        <option value="<?= (int)$departement['id'] ?>" <?= $serviceSelectionne === (int)$departement['id'] ? 'selected' : '' ?> <?= !$departement['actif'] && (int)($user['service_id'] ?? 0) !== (int)$departement['id'] ? 'disabled' : '' ?>><?= e($departement['nom']) ?><?= $departement['actif'] ? '' : ' · Inactif' ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <div class="form-text">Gérer la liste dans <a href="<?= APP_URL ?>/admin-departements">Administration → Départements</a>.</div>
                             </div>
 
                             <!-- Téléphone -->

@@ -10,7 +10,7 @@ $pdo = getDB();
 $root = realpath(__DIR__ . '/..');
 $tag = 'HTTPREQ-' . bin2hex(random_bytes(6));
 $tempDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . strtolower($tag);
-$users = []; $sessions = []; $requestIds = []; $temporaryFiles = [];
+$users = []; $sessions = []; $requestIds = []; $temporaryFiles = []; $departments = [];
 $process = null; $checks = 0; $baseUrl = ''; $exitCode = 0;
 
 function httpRequestAssert(bool $condition, string $message): void {
@@ -52,7 +52,7 @@ function httpRequestRow(int $id): array {
     $stmt->execute([$id]);
     return $stmt->fetch() ?: [];
 }
-function httpRequestCreate(string $role, string $object): int {
+function httpRequestCreate(string $role, string $object, ?int $departmentId = null): int {
     global $sessions, $users, $pdo, $requestIds, $tag;
     $get = httpRequestCall($role,'/treasury/demande-ajouter');
     httpRequestAssert($get['status']===200, 'Formulaire inaccessible pour '.$role);
@@ -63,6 +63,7 @@ function httpRequestCreate(string $role, string $object): int {
     $post = httpRequestCall($role,'/treasury/demande-ajouter',[
         'csrf_token'=>$sessions[$role]['csrf'], 'request_date'=>date('Y-m-d'),
         'department'=>'Département falsifié', 'requester_name'=>'Demandeur falsifié',
+        'department_id'=>$departmentId ?? -12345,
         'beneficiary'=>$tag.' Fournisseur', 'objet'=>$object, 'description'=>'Justification du besoin pour le test HTTP temporaire.',
         'currency'=>'USD','category_id'=>$category,'urgency'=>'moyenne',
         'amount'=>1,'amount_usd'=>999999,
@@ -80,7 +81,11 @@ function httpRequestCreate(string $role, string $object): int {
     $row = httpRequestRow($id);
     httpRequestAssert($row['status']==='brouillon','Le brouillon a changé prématurément de statut.');
     httpRequestAssert((float)$row['amount']===2000.0 && (float)$row['amount_usd']===2000.0,'Total issu des lignes non recalculé.');
-    httpRequestAssert($row['department']===$users[$role]['service'] && $row['requester_name']===$users[$role]['nom'],'Identité ou département falsifié accepté.');
+    if ($departmentId === null) {
+        httpRequestAssert($row['department']===$users[$role]['service'] && $row['requester_name']===$users[$role]['nom'] && (int)$row['department_id']===$users[$role]['service_id'],'Identité ou département falsifié accepté.');
+    } else {
+        httpRequestAssert((int)$row['department_id']===$departmentId,'Département sélectionné non enregistré.');
+    }
     return $id;
 }
 function httpRequestDecision(string $role, int $id, string $level, string $decision, array $extra=[]): array {
@@ -108,14 +113,20 @@ try {
         'comptable'=>['comptable_senior',$tag.'-Comptabilite'],
         'daf'=>['directeur_financier',$tag.'-Finance'], 'dg'=>['directeur_general',$tag.'-DG'],
         'auditeur'=>['auditeur_interne',$tag.'-Audit'],
+        'admin'=>['admin',$tag.'-Administration'],
     ];
     foreach ($roles as $key=>[$role,$service]) {
+        if (!isset($departments[$service])) {
+            $pdo->prepare('INSERT INTO services (nom,description,actif) VALUES (?, ?, 1)')->execute([$service,'Référentiel temporaire test HTTP']);
+            $departments[$service] = (int)$pdo->lastInsertId();
+        }
         $name = $tag.' '.$key;
         $pdo->prepare('INSERT INTO users (nom,email,password,role,service,actif) VALUES (?,?,?,?,?,1)')->execute([
             $name,strtolower($tag.'-'.$key).'@example.invalid',bin2hex(random_bytes(30)),$role,$service,
         ]);
         $id = (int)$pdo->lastInsertId();
-        $users[$key] = ['id'=>$id,'nom'=>$name,'service'=>$service];
+        $pdo->prepare('UPDATE users SET service_id=? WHERE id=?')->execute([$departments[$service],$id]);
+        $users[$key] = ['id'=>$id,'nom'=>$name,'service'=>$service,'service_id'=>$departments[$service]];
         $sessions[$key] = ['id'=>bin2hex(random_bytes(16)),'csrf'=>bin2hex(random_bytes(32))];
         session_id($sessions[$key]['id']); session_start();
         $_SESSION = ['user_id'=>$id,'user_nom'=>$name,'user_role'=>$role,'user_service'=>$service,'csrf_token'=>$sessions[$key]['csrf']];
@@ -200,6 +211,47 @@ try {
     $events = $pdo->prepare('SELECT COUNT(*) FROM treasury_request_approvals WHERE request_id=?');$events->execute([$main]);
     httpRequestAssert((int)$events->fetchColumn()===6,'Historique des décisions HTTP incomplet.');
 
+    // Référentiel, accès administrateur, renommage et désactivation.
+    $directory = httpRequestCall('admin','/admin-departements');
+    httpRequestAssert($directory['status']===200 && str_contains($directory['body'],'Référentiel des départements'),'Référentiel admin inaccessible.');
+    httpRequestAssert(httpRequestCall('agentA','/admin-departements')['status']===302,'Référentiel accessible hors administration.');
+    $newName = $tag.'-Nouveau';
+    $payload = ['csrf_token'=>$sessions['admin']['csrf'],'action'=>'enregistrer','nom'=>$newName,'description'=>'Département de démonstration'];
+    $bad = httpRequestCall('admin','/admin-departements',array_merge($payload,['csrf_token'=>'incorrect']));
+    httpRequestAssert($bad['status']===200 && str_contains($bad['body'],'expiré'),'CSRF référentiel ignoré.');
+    $created = httpRequestCall('admin','/admin-departements',$payload);
+    $find = $pdo->prepare('SELECT id FROM services WHERE nom=?'); $find->execute([$newName]); $newDepartment=(int)$find->fetchColumn();
+    if ($newDepartment) $departments[$newName]=$newDepartment;
+    httpRequestAssert($created['status']===302 && $newDepartment>0,'Création de département échouée.');
+    $duplicate = httpRequestCall('admin','/admin-departements',$payload);
+    httpRequestAssert($duplicate['status']===200 && str_contains($duplicate['body'],'existe déjà'),'Doublon département accepté.');
+    $treasurerForm=httpRequestCall('tresorier','/treasury/demande-ajouter');
+    httpRequestAssert(str_contains($treasurerForm['body'],'name="department_id"') && str_contains($treasurerForm['body'],$newName),'Liste déroulante non alimentée.');
+    $referenceRequest=httpRequestCreate('tresorier',$tag.' Demande référentiel',$newDepartment);
+    $renameName=$tag.'-A-Renomme';$originalA=$users['agentA']['service'];$departmentA=$users['agentA']['service_id'];
+    $renamed=httpRequestCall('admin','/admin-departements',['csrf_token'=>$sessions['admin']['csrf'],'action'=>'enregistrer','id'=>$departmentA,'nom'=>$renameName,'description'=>'Renommage de test']);
+    httpRequestAssert($renamed['status']===302,'Renommage impossible.');
+    $chiefAfter=httpRequestCall('chefA','/treasury/demande-voir/'.$main);
+    $chiefAfterList=httpRequestCall('chefA','/treasury/demandes');
+    httpRequestAssert($chiefAfter['status']===200 && str_contains($chiefAfterList['body'],$tag.' Demande département A'),'Renommage coupe le périmètre du chef.');
+    httpRequestAssert(httpRequestRow($main)['department']===$originalA,'Le libellé historique a été réécrit.');
+    $renamedForm=httpRequestCall('agentA','/treasury/demande-ajouter');
+    httpRequestAssert(str_contains($renamedForm['body'],$renameName),'Session non actualisée après renommage.');
+    $deactivate=httpRequestCall('admin','/admin-departements',['csrf_token'=>$sessions['admin']['csrf'],'action'=>'etat','id'=>$newDepartment,'actif'=>'0']);
+    httpRequestAssert($deactivate['status']===302,'Désactivation impossible.');
+    $activeForm=httpRequestCall('tresorier','/treasury/demande-ajouter');
+    httpRequestAssert(!str_contains($activeForm['body'],$newName),'Département inactif encore proposé.');
+    $inactivePost=httpRequestCall('tresorier','/treasury/demande-ajouter',['csrf_token'=>$sessions['tresorier']['csrf'],'department_id'=>$newDepartment,'requester_name'=>'Test','objet'=>'Refus inactif']);
+    httpRequestAssert($inactivePost['status']===200 && str_contains($inactivePost['body'],'département actif'),'Département inactif accepté côté serveur.');
+    httpRequestAssert(httpRequestCall('tresorier','/treasury/demande-voir/'.$referenceRequest)['status']===200,'Désactivation masque les demandes historiques.');
+    httpRequestCall('admin','/admin-departements',['csrf_token'=>$sessions['admin']['csrf'],'action'=>'etat','id'=>$newDepartment,'actif'=>'1']);
+    httpRequestAssert(str_contains(httpRequestCall('tresorier','/treasury/demande-ajouter')['body'],$newName),'Réactivation non répercutée.');
+    $userForm=httpRequestCall('admin','/users/modifier/'.$users['agentB']['id']);
+    httpRequestAssert($userForm['status']===200 && str_contains($userForm['body'],'name="service_id"'),'Affectation utilisateur sans référentiel.');
+    $userPost=httpRequestCall('admin','/users/modifier/'.$users['agentB']['id'],['csrf_token'=>$sessions['admin']['csrf'],'nom'=>$users['agentB']['nom'],'email'=>strtolower($tag.'-agentB').'@example.invalid','role'=>'agent','service_id'=>$newDepartment,'telephone'=>'']);
+    $assigned=$pdo->prepare('SELECT service_id,service FROM users WHERE id=?');$assigned->execute([$users['agentB']['id']]);$assignment=$assigned->fetch();
+    httpRequestAssert($userPost['status']===302 && (int)$assignment['service_id']===$newDepartment && $assignment['service']===$newName,'Affectation utilisateur non synchronisée.');
+
     echo json_encode(['status'=>'ok','checks'=>$checks,'base_url'=>$baseUrl,'request_id'=>$main],JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE).PHP_EOL;
     foreach ($argv as $arg) {
         if (!preg_match('/^--preview-seconds=(\d+)$/',$arg,$match)) continue;
@@ -233,6 +285,7 @@ try {
         $pdo->prepare('DELETE FROM audit_logs WHERE user_id=?')->execute([$user['id']]);
         $pdo->prepare('DELETE FROM users WHERE id=?')->execute([$user['id']]);
     }
+    foreach (array_unique($departments) as $departmentId) $pdo->prepare('DELETE FROM services WHERE id=?')->execute([$departmentId]);
     foreach ($sessions as $session) {
         $path=($sessionDir??'').DIRECTORY_SEPARATOR.'sess_'.$session['id'];
         if (is_file($path)) unlink($path);

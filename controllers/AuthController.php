@@ -46,6 +46,7 @@ class AuthController {
                         $_SESSION['user_email']= $user['email'];
                         $_SESSION['user_role'] = $user['role'];
                         $_SESSION['user_service'] = $user['service'];
+                        $_SESSION['user_service_id'] = $user['service_id'] ?? null;
 
                         // Journal d'audit
                         logAudit("Connexion réussie", 'users', $user['id']);
