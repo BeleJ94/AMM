@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/FinancialAccountGuard.php';
 /**
  * Modèle FinancialTracking - Suivi financier (revenus, dépenses, budgets)
  * AMM-ERP
@@ -79,28 +80,32 @@ class FinancialTracking {
     }
 
     public function enregistrerCompte(array $donnees, ?int $id = null): int {
-        if ($id !== null) {
+        return FinancialAccountGuard::transaction($this->pdo, function () use ($donnees, $id) {
+            if ($id !== null) FinancialAccountGuard::verifierModification($this->pdo, $id, $donnees['devise']);
+
+            if ($id !== null) {
+                $stmt = $this->pdo->prepare(
+                    "UPDATE financial_accounts
+                     SET nom = ?, type_compte = ?, devise = ?, reference_compte = ?
+                     WHERE id = ?"
+                );
+                $stmt->execute([
+                    $donnees['nom'], $donnees['type_compte'], $donnees['devise'],
+                    $donnees['reference_compte'] ?: null, $id,
+                ]);
+                return $id;
+            }
+
             $stmt = $this->pdo->prepare(
-                "UPDATE financial_accounts
-                 SET nom = ?, type_compte = ?, devise = ?, reference_compte = ?
-                 WHERE id = ?"
+                "INSERT INTO financial_accounts (nom, type_compte, devise, reference_compte, actif, created_at)
+                 VALUES (?, ?, ?, ?, 1, NOW())"
             );
             $stmt->execute([
                 $donnees['nom'], $donnees['type_compte'], $donnees['devise'],
-                $donnees['reference_compte'] ?: null, $id,
+                $donnees['reference_compte'] ?: null,
             ]);
-            return $id;
-        }
-
-        $stmt = $this->pdo->prepare(
-            "INSERT INTO financial_accounts (nom, type_compte, devise, reference_compte, actif, created_at)
-             VALUES (?, ?, ?, ?, 1, NOW())"
-        );
-        $stmt->execute([
-            $donnees['nom'], $donnees['type_compte'], $donnees['devise'],
-            $donnees['reference_compte'] ?: null,
-        ]);
-        return (int)$this->pdo->lastInsertId();
+            return (int)$this->pdo->lastInsertId();
+        });
     }
 
     public function toggleCompteActif(int $id): bool {
@@ -198,39 +203,43 @@ class FinancialTracking {
      * Crée une transaction.
      */
     public function creerTransaction(array $donnees): int {
-        $reference = $this->genererReferenceTransaction();
-        $montantUsd = $this->convertirVersUsd(
-            (float)$donnees['montant'],
-            $donnees['devise'],
-            isset($donnees['taux_change']) ? (float)$donnees['taux_change'] : null
-        );
+        return FinancialAccountGuard::transaction($this->pdo, function () use ($donnees) {
+            FinancialAccountGuard::verifier($this->pdo, (int)$donnees['compte_id'], $donnees['devise']);
 
-        $stmt = $this->pdo->prepare(
-            "INSERT INTO financial_transactions
-             (reference_unique, date_operation, type_flux, categorie_id, compte_id, montant,
-              devise, taux_change, montant_usd, statut, partenaire, description, piece_jointe,
-              created_by, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())"
-        );
+            $reference = $this->genererReferenceTransaction();
+            $montantUsd = $this->convertirVersUsd(
+                (float)$donnees['montant'],
+                $donnees['devise'],
+                isset($donnees['taux_change']) ? (float)$donnees['taux_change'] : null
+            );
 
-        $stmt->execute([
-            $reference,
-            $donnees['date_operation'],
-            $donnees['type_flux'],
-            $donnees['categorie_id'],
-            $donnees['compte_id'],
-            $donnees['montant'],
-            $donnees['devise'],
-            $donnees['taux_change'] ?: null,
-            $montantUsd,
-            $donnees['statut'] ?? 'brouillon',
-            $donnees['partenaire'] ?: null,
-            $donnees['description'] ?: null,
-            $donnees['piece_jointe'] ?: null,
-            $donnees['created_by'] ?? null,
-        ]);
+            $stmt = $this->pdo->prepare(
+                "INSERT INTO financial_transactions
+                 (reference_unique, date_operation, type_flux, categorie_id, compte_id, montant,
+                  devise, taux_change, montant_usd, statut, partenaire, description, piece_jointe,
+                  created_by, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())"
+            );
 
-        return (int)$this->pdo->lastInsertId();
+            $stmt->execute([
+                $reference,
+                $donnees['date_operation'],
+                $donnees['type_flux'],
+                $donnees['categorie_id'],
+                $donnees['compte_id'],
+                $donnees['montant'],
+                $donnees['devise'],
+                $donnees['taux_change'] ?: null,
+                $montantUsd,
+                $donnees['statut'] ?? 'brouillon',
+                $donnees['partenaire'] ?: null,
+                $donnees['description'] ?: null,
+                $donnees['piece_jointe'] ?: null,
+                $donnees['created_by'] ?? null,
+            ]);
+
+            return (int)$this->pdo->lastInsertId();
+        });
     }
 
     /**
@@ -252,12 +261,18 @@ class FinancialTracking {
      * Valide une transaction brouillon.
      */
     public function validerTransaction(int $id, int $userId): bool {
-        $stmt = $this->pdo->prepare(
-            "UPDATE financial_transactions
-             SET statut = 'valide', approved_by = ?, approved_at = NOW()
-             WHERE id = ? AND statut = 'brouillon'"
-        );
-        return $stmt->execute([$userId, $id]);
+        return FinancialAccountGuard::transaction($this->pdo, function () use ($id, $userId) {
+            $row = $this->trouverTransactionParId($id);
+            if (!$row || $row['statut'] !== 'brouillon') return false;
+            FinancialAccountGuard::verifier($this->pdo, (int)$row['compte_id'], $row['devise']);
+
+            $stmt = $this->pdo->prepare(
+                "UPDATE financial_transactions
+                 SET statut = 'valide', approved_by = ?, approved_at = NOW()
+                 WHERE id = ? AND statut = 'brouillon'"
+            );
+            return $stmt->execute([$userId, $id]);
+        });
     }
 
     /**

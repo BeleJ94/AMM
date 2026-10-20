@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/FinancialAccountGuard.php';
 /**
  * Modele Treasury - Gestion de la tresorerie operationnelle
  * AMM-ERP
@@ -323,40 +324,44 @@ class Treasury {
     }
 
     public function creerEncaissement(array $donnees): int {
-        $numero = $donnees['receipt_number'] ?? $this->genererNumeroRecu();
-        $amountUsd = $this->convertirVersUsd(
-            (float)$donnees['amount'],
-            (string)$donnees['currency'],
-            isset($donnees['exchange_rate']) ? (float)$donnees['exchange_rate'] : null
-        );
+        return FinancialAccountGuard::transaction($this->pdo, function () use ($donnees) {
+            FinancialAccountGuard::verifier($this->pdo, (int)$donnees['account_id'], $donnees['currency'], $donnees['payment_method']);
 
-        $stmt = $this->pdo->prepare(
-            "INSERT INTO treasury_receipts
-             (receipt_number, date_receipt, payer_name, objet, amount, currency, exchange_rate,
-              amount_usd, payment_method, account_id, document_id, proof_file, reference_payment,
-              notes, status, created_by, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'brouillon', ?, NOW())"
-        );
+            $numero = $donnees['receipt_number'] ?? $this->genererNumeroRecu();
+            $amountUsd = $this->convertirVersUsd(
+                (float)$donnees['amount'],
+                (string)$donnees['currency'],
+                isset($donnees['exchange_rate']) ? (float)$donnees['exchange_rate'] : null
+            );
 
-        $stmt->execute([
-            $numero,
-            $donnees['date_receipt'] ?? date('Y-m-d'),
-            $donnees['payer_name'],
-            $donnees['objet'],
-            $donnees['amount'],
-            $donnees['currency'] ?? 'USD',
-            !empty($donnees['exchange_rate']) ? $donnees['exchange_rate'] : null,
-            $amountUsd,
-            $donnees['payment_method'],
-            (int)$donnees['account_id'],
-            !empty($donnees['document_id']) ? (int)$donnees['document_id'] : null,
-            $donnees['proof_file'] ?? null,
-            $donnees['reference_payment'] ?? null,
-            $donnees['notes'] ?? null,
-            $donnees['created_by'] ?? null,
-        ]);
+            $stmt = $this->pdo->prepare(
+                "INSERT INTO treasury_receipts
+                 (receipt_number, date_receipt, payer_name, objet, amount, currency, exchange_rate,
+                  amount_usd, payment_method, account_id, document_id, proof_file, reference_payment,
+                  notes, status, created_by, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'brouillon', ?, NOW())"
+            );
 
-        return (int)$this->pdo->lastInsertId();
+            $stmt->execute([
+                $numero,
+                $donnees['date_receipt'] ?? date('Y-m-d'),
+                $donnees['payer_name'],
+                $donnees['objet'],
+                $donnees['amount'],
+                $donnees['currency'] ?? 'USD',
+                !empty($donnees['exchange_rate']) ? $donnees['exchange_rate'] : null,
+                $amountUsd,
+                $donnees['payment_method'],
+                (int)$donnees['account_id'],
+                !empty($donnees['document_id']) ? (int)$donnees['document_id'] : null,
+                $donnees['proof_file'] ?? null,
+                $donnees['reference_payment'] ?? null,
+                $donnees['notes'] ?? null,
+                $donnees['created_by'] ?? null,
+            ]);
+
+            return (int)$this->pdo->lastInsertId();
+        });
     }
 
     public function validerEncaissement(int $id, int $userId): bool {
@@ -365,8 +370,10 @@ class Treasury {
             return false;
         }
 
+        $owner = !$this->pdo->inTransaction();
         try {
-            $this->pdo->beginTransaction();
+            if ($owner) $this->pdo->beginTransaction();
+            FinancialAccountGuard::verifier($this->pdo, (int)$encaissement['account_id'], $encaissement['currency'], $encaissement['payment_method']);
 
             $transactionId = $this->creerTransactionFinanciere([
                 'date_operation' => $encaissement['date_receipt'],
@@ -397,12 +404,13 @@ class Treasury {
                 $this->recalculerSessionCaisse((int)$encaissement['account_id'], (string)$encaissement['date_receipt']);
             }
 
-            $this->pdo->commit();
+            if ($owner) $this->pdo->commit();
             return true;
         } catch (Throwable $e) {
-            if ($this->pdo->inTransaction()) {
+            if ($owner && $this->pdo->inTransaction()) {
                 $this->pdo->rollBack();
             }
+            if ($e instanceof DomainException) throw $e;
             error_log('Erreur validerEncaissement: ' . $e->getMessage());
             return false;
         }
@@ -2105,6 +2113,7 @@ class Treasury {
     }
 
     private function creerTransactionFinanciere(array $donnees): int {
+        FinancialAccountGuard::verifier($this->pdo, (int)$donnees['compte_id'], $donnees['devise']);
         $stmt = $this->pdo->prepare(
             "INSERT INTO financial_transactions
              (reference_unique, date_operation, type_flux, categorie_id, compte_id, montant,

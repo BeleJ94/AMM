@@ -69,13 +69,14 @@ require_once __DIR__ . '/../layouts/header.php';
         text('summaryAccount', selectedText(account));
         const option = account.selectedOptions[0];
         const mismatch = account.value && option.dataset.currency !== currency.value;
+        account.setCustomValidity(mismatch ? 'S?lectionnez un compte en ' + currency.value + '.' : '');
         warning.hidden = !mismatch;
         warning.textContent = mismatch ? 'Le compte sélectionné est en ' + option.dataset.currency + ', mais le montant est encaissé en ' + currency.value + '. Vérifiez l’affectation avant de continuer.' : '';
     }
     function filterAccounts() {
         const type = {especes:'caisse', banque:'banque', mobile_money:'mobile_money'}[method.value];
         Array.from(account.options).forEach(option => {
-            const incompatible = !!option.value && !!type && option.dataset.type !== type;
+            const incompatible = !!option.value && ((!!type && option.dataset.type !== type) || option.dataset.currency !== currency.value);
             option.hidden = incompatible;
             option.disabled = incompatible;
         });
@@ -102,6 +103,7 @@ require_once __DIR__ . '/../layouts/header.php';
     form.addEventListener('input', updateSummary);
     form.addEventListener('change', updateSummary);
     method.addEventListener('change', filterAccounts);
+    currency.addEventListener('change', filterAccounts);
     form.addEventListener('submit', event => {
         event.preventDefault();
         if (submitting) return;

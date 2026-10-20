@@ -221,14 +221,16 @@ class TreasuryController {
                 $this->validerDonneesEncaissement($donnees, $erreurs);
 
                 if (empty($erreurs)) {
-                    $id = $this->treasuryModel->creerEncaissement($donnees);
-                    logAudit('Creation encaissement tresorerie #' . $id, 'treasury_receipts', $id);
-                    $_SESSION['encaissement_swal'] = [
-                        'icon' => 'success',
-                        'title' => 'Encaissement enregistré',
-                        'text' => 'Le reçu a été créé en brouillon avec succès.',
-                    ];
-                    redirect('/treasury/encaissement-voir/' . $id);
+                    try {
+                        $id = $this->treasuryModel->creerEncaissement($donnees);
+                        logAudit('Creation encaissement tresorerie #' . $id, 'treasury_receipts', $id);
+                        $_SESSION['encaissement_swal'] = [
+                            'icon' => 'success',
+                            'title' => 'Encaissement enregistré',
+                            'text' => 'Le reçu a été créé en brouillon avec succès.',
+                        ];
+                        redirect('/treasury/encaissement-voir/' . $id);
+                    } catch (DomainException $e) { $erreurs[] = $e->getMessage(); }
                 }
             }
         }
@@ -265,7 +267,10 @@ class TreasuryController {
                 redirect('/treasury/encaissement-voir/' . (int)$id);
             }
 
-            $ok = $this->treasuryModel->validerEncaissement((int)$id, (int)($_SESSION['user_id'] ?? 0));
+            try { $ok = $this->treasuryModel->validerEncaissement((int)$id, (int)($_SESSION['user_id'] ?? 0)); } catch (DomainException $e) {
+            flashMessage('erreur', $e->getMessage());
+            redirect('/treasury/encaissement-voir/' . (int)$id);
+        }
             if ($ok) {
                 logAudit('Validation encaissement tresorerie #' . (int)$id, 'treasury_receipts', (int)$id);
                 flashMessage('succes', 'Encaissement valide et transaction financiere creee.');

@@ -44,6 +44,8 @@ class FinancialSettingsController {
             $recordId = $this->financeModel->enregistrerCompte($donnees, $id > 0 ? $id : null);
             logAudit($id > 0 ? 'Modification compte financier' : 'Creation compte financier', 'financial_accounts', $recordId);
             flashMessage('succes', $id > 0 ? 'Compte financier modifié.' : 'Compte financier créé.');
+        } catch (DomainException $e) {
+            flashMessage('erreur', $e->getMessage());
         } catch (PDOException $e) {
             flashMessage('erreur', $e->getCode() === '23000' ? 'Un compte porte déjà ce nom.' : 'Impossible d’enregistrer le compte.');
         }
@@ -75,6 +77,8 @@ class FinancialSettingsController {
             $recordId = $this->financeModel->enregistrerCategorie($donnees, $id > 0 ? $id : null);
             logAudit($id > 0 ? 'Modification categorie financiere' : 'Creation categorie financiere', 'financial_categories', $recordId);
             flashMessage('succes', $id > 0 ? 'Catégorie modifiée.' : 'Catégorie créée.');
+        } catch (DomainException $e) {
+            flashMessage('erreur', $e->getMessage());
         } catch (PDOException $e) {
             flashMessage('erreur', $e->getCode() === '23000' ? 'Cette catégorie existe déjà pour ce type de flux.' : 'Impossible d’enregistrer la catégorie.');
         }

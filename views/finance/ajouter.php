@@ -54,10 +54,10 @@
                             </div>
                             <div class="col-md-3">
                                 <label class="form-label fw-semibold">Compte <span class="text-danger">*</span></label>
-                                <select class="form-select" name="compte_id" required>
+                                <select class="form-select" name="compte_id" id="compteField" required>
                                     <option value="">-- Sélectionner --</option>
                                     <?php foreach ($comptes as $a): ?>
-                                        <option value="<?= (int)$a['id'] ?>" <?= ((int)($_POST['compte_id'] ?? 0) === (int)$a['id']) ? 'selected' : '' ?>>
+                                        <option data-currency="<?= e($a['devise']) ?>" value="<?= (int)$a['id'] ?>" <?= ((int)($_POST['compte_id'] ?? 0) === (int)$a['id']) ? 'selected' : '' ?>>
                                             <?= e($a['nom']) ?> (<?= e($a['devise']) ?>)
                                         </option>
                                     <?php endforeach; ?>
@@ -115,6 +115,12 @@
     var tauxField = document.getElementById('tauxChangeField');
 
     function toggleTaux() {
+        var account = document.getElementById('compteField');
+        Array.from(account.options).forEach(function (option) {
+            var incompatible = !!option.value && option.dataset.currency !== deviseField.value;
+            option.hidden = incompatible; option.disabled = incompatible;
+        });
+        if (account.selectedOptions[0] && account.selectedOptions[0].disabled) account.value = '';
         var isCDF = deviseField && deviseField.value === 'CDF';
         if (!tauxField) return;
         tauxField.required = isCDF;

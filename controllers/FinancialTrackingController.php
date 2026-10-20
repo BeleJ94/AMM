@@ -108,10 +108,12 @@ class FinancialTrackingController {
                 }
 
                 if (empty($erreurs)) {
-                    $id = $this->financeModel->creerTransaction($donnees);
-                    logAudit('Création transaction financière #' . $id, 'financial_transactions', $id);
-                    flashMessage('succes', 'Transaction créée en brouillon avec succès.');
-                    redirect('/finance/transactions');
+                    try {
+                        $id = $this->financeModel->creerTransaction($donnees);
+                        logAudit('Création transaction financière #' . $id, 'financial_transactions', $id);
+                        flashMessage('succes', 'Transaction créée en brouillon avec succès.');
+                        redirect('/finance/transactions');
+                    } catch (DomainException $e) { $erreurs[] = $e->getMessage(); }
                 }
             }
         }
@@ -135,7 +137,10 @@ class FinancialTrackingController {
         }
 
         $id = (int)$id;
-        $ok = $this->financeModel->validerTransaction($id, (int)($_SESSION['user_id'] ?? 0));
+        try { $ok = $this->financeModel->validerTransaction($id, (int)($_SESSION['user_id'] ?? 0)); } catch (DomainException $e) {
+            flashMessage('erreur', $e->getMessage());
+            redirect('/finance/transactions');
+        }
         if ($ok) {
             logAudit('Validation transaction financière #' . $id, 'financial_transactions', $id);
             flashMessage('succes', 'Transaction validée.');
