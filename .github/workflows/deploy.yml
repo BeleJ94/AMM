@@ -33,9 +33,17 @@ jobs:
           
           # Corriger les permissions
           echo "🔧 Correction des permissions..."
-          sudo chown -R www-data:www-data .
+          # Sous Plesk, PHP-FPM s'exécute avec l'utilisateur système de l'abonnement
+          # (propriétaire du dossier vhost), et non www-data.
+          PHP_USER=$(stat -c %U /var/www/vhosts/belej-erp.com)
+          sudo chown -R "$PHP_USER":psacln .
           sudo find . -type d -exec chmod 755 {} \;
           sudo find . -type f -exec chmod 644 {} \;
+
+          # Dossiers écrits par l'application (uploads, journaux, sauvegardes)
+          sudo mkdir -p assets/uploads/documents assets/backups logs
+          sudo chown -R "$PHP_USER":psacln assets/uploads assets/backups logs
+          sudo chmod -R u+rwX assets/uploads assets/backups logs
           
           echo "✅ Déploiement de AMM terminé avec succès !"
           
