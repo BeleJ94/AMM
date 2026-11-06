@@ -23,6 +23,8 @@ $canSubmit = $demande['status'] === 'brouillon' && !empty($peutSoumettre);
 $isSuspended = $demande['status'] === 'en_suspens';
 $canResume = $isSuspended && !empty($niveauxValidationAutorises[$demande['suspended_level'] ?? '']) && !$isOwnRequest;
 $canControl = $demande['status'] === 'a_controler' && !empty($peutControlerDemande);
+$canChef = $demande['status'] === 'a_valider_chef' && !empty($peutValiderChef);
+$passeParChef = in_array((int)($demande['department_id'] ?? 0), $departementsVisaChef ?? [], true);
 $lignesDemande = $lignesDemande ?? [];
 $approvedAmount = (float)($demande['approved_amount'] ?? $demande['amount']);
 $isPartial = $approvedAmount < (float)$demande['amount'] - 0.00001;
@@ -36,11 +38,12 @@ $canValidate = $canComptable || $canDirectionFin || $canDirectionGen;
 $canOrder = $demande['status'] === 'validee_direction' && !empty($peutEmettreOrdre);
 $peutAnnulerDemande = $peutAnnulerDemande ?? false;
 $canCancelRequest = $peutAnnulerDemande
-    && in_array($demande['status'], ['brouillon','a_controler','soumise','validee_comptable','validee_direction','en_suspens','rejetee'], true);
+    && in_array($demande['status'], ['brouillon','a_valider_chef','a_controler','soumise','validee_comptable','validee_direction','en_suspens','rejetee'], true);
 $canCancelOrder = $peutAnnulerDemande && !empty($ordre) && ($ordre['status'] ?? '') === 'emis';
 
 $workflowSteps = [
     'brouillon' => ['icon' => 'bi-pencil-square', 'label' => 'Préparation'],
+    'a_valider_chef' => ['icon' => 'bi-person-check', 'label' => 'Chef de département'],
     'a_controler' => ['icon' => 'bi-search', 'label' => 'Trésorier A'],
     'soumise' => ['icon' => 'bi-shield-check', 'label' => 'Comptable senior'],
     'validee_comptable' => ['icon' => 'bi-building-check', 'label' => 'Direction'],
@@ -48,6 +51,7 @@ $workflowSteps = [
     'ordre_emis' => ['icon' => 'bi-file-earmark-check', 'label' => 'Ordonnancement'],
     'payee' => ['icon' => 'bi-cash-coin', 'label' => 'Paiement'],
 ];
+if (!$passeParChef && $demande['status'] !== 'a_valider_chef' && !in_array('chef_service', array_column($validations, 'approval_level'), true)) unset($workflowSteps['a_valider_chef']);
 $workflowOrder = array_keys($workflowSteps);
 $currentWorkflowIndex = array_search($isSuspended ? ($demande['previous_status'] ?? '') : $demande['status'], $workflowOrder, true);
 $isStopped = in_array($demande['status'], ['rejetee', 'annulee'], true);
@@ -60,7 +64,8 @@ if ($directionGeneraleValidee && !$directionFinanciereValidee) {
     $directionNextAction = ['Validation de la Direction générale attendue', 'La Direction financière a déjà approuvé cette demande. Le visa de la Direction générale reste requis.', 'bi-building-check'];
 }
 $nextAction = [
-    'brouillon' => ['Soumettre la demande', 'Elle sera transmise au Trésorier A pour contrôle avant la validation comptable.', 'bi-send'],
+    'brouillon' => ['Soumettre la demande', 'Elle sera validée par le chef de département puis contrôlée par le Trésorier A avant la validation comptable.', 'bi-send'],
+    'a_valider_chef' => ['Validation du chef de département attendue', (!empty($chefsAttendus) ? 'En attente de : ' . implode(', ', $chefsAttendus) . ' (chef ' . ($demande['department'] ?? '') . '). ' : '') . 'Le chef vérifie le besoin avant sa transmission au Trésorier A.', 'bi-person-check'],
     'a_controler' => ['Contrôle du Trésorier A attendu', 'Le Trésorier A vérifie le dossier et le transmet au Comptable senior.', 'bi-search'],
     'en_suspens' => ['Demande en suspens', 'Le traitement reprendra au niveau ' . treasuryUiLabel($demande['suspended_level'] ?? '') . (!empty($demande['reminder_date']) ? '. Rappel prévu le ' . formatDate($demande['reminder_date']) . '.' : '.'), 'bi-pause-circle'],
     'soumise' => ['Contrôle comptable attendu', 'La demande est en attente de la décision du Comptable senior.', 'bi-hourglass-split'],
@@ -170,12 +175,12 @@ document.addEventListener('DOMContentLoaded', function () {
     </section>
     <?php if (!$isStopped): ?><div class="tr-workflow mb-3" aria-label="Progression de la demande"><?php foreach (array_values($workflowSteps) as $stepIndex => $step): ?><div class="tr-workflow-step <?= $currentWorkflowIndex !== false && $stepIndex < $currentWorkflowIndex ? 'is-done' : ($stepIndex === $currentWorkflowIndex ? 'is-current' : '') ?>"><i class="bi <?= e($step['icon']) ?> me-1"></i><?= e($step['label']) ?></div><?php endforeach; ?></div><?php endif; ?>
 
-    <?php if ($isOwnRequest && in_array($demande['status'], ['soumise','validee_comptable'], true)): ?>
+    <?php if ($isOwnRequest && in_array($demande['status'], ['a_valider_chef','soumise','validee_comptable'], true)): ?>
         <div class="small text-muted mb-4"><i class="bi bi-shield-lock me-1"></i>Séparation des tâches active : le créateur ou soumetteur ne peut pas approuver sa propre demande.</div>
     <?php endif; ?>
 
     <div class="row g-4">
-        <div class="<?= ($canValidate || $canControl || $canResume) ? 'col-lg-8' : 'col-12' ?>">
+        <div class="<?= ($canValidate || $canControl || $canResume || $canChef) ? 'col-lg-8' : 'col-12' ?>">
             <section class="card request-section-card mb-4"><div class="card-header bg-transparent border-0 pt-4 px-4"><h2 class="h6 fw-bold mb-1">Détail des biens et services</h2><div class="small text-muted">Prix unitaires estimés · <?= e($demande['currency']) ?></div></div><div class="card-body px-0 pb-0"><div class="table-responsive"><table class="table tr-detail-table mb-0" id="tableBiensDemande" <?php if (!empty($lignesDemande)): ?>data-register-table<?php endif; ?> data-register-order='[]'><thead><tr><th>N°</th><th>Services / Biens</th><th class="text-end">Quantité</th><th class="text-end">Prix unitaire estimé</th><th class="text-end">Total</th></tr></thead><tbody><?php if (empty($lignesDemande)): ?><tr><td colspan="5" class="text-muted py-4 px-4">Cette demande historique ne comporte pas de lignes détaillées. Le montant et la justification sont conservés ci-dessous.</td></tr><?php endif; ?><?php foreach ($lignesDemande as $lineIndex => $line): ?><tr><td><?= $lineIndex + 1 ?></td><td><?= e($line['description']) ?></td><td class="text-end"><?= e(rtrim(rtrim(number_format((float)$line['quantity'], 4, '.', ' '), '0'), '.')) ?></td><td class="text-end text-nowrap"><?= formatMontant((float)$line['unit_price'], $demande['currency']) ?></td><td class="text-end fw-semibold text-nowrap"><?= formatMontant((float)($line['line_total'] ?? ((float)$line['quantity'] * (float)$line['unit_price'])), $demande['currency']) ?></td></tr><?php endforeach; ?></tbody><tfoot><tr><td colspan="4" class="text-end fw-bold">Total demandé</td><td class="text-end fw-bold text-nowrap"><?= formatMontant((float)$demande['amount'], $demande['currency']) ?></td></tr></tfoot></table></div></div></section>
             <div class="card section-card request-section-card mb-4">
                 <div class="card-header bg-transparent border-0 pt-4 px-4"><h3 class="h6 fw-bold mb-0">Informations de la demande</h3></div>
@@ -189,7 +194,7 @@ document.addEventListener('DOMContentLoaded', function () {
                     </div>
                     <?php if ($demande['status'] === 'annulee'): ?><div class="alert alert-danger mt-3 mb-0"><strong>Motif d’annulation :</strong><br><?= nl2br(e($demande['cancellation_reason'] ?? '—')) ?></div><?php endif; ?>
                     <div class="d-flex flex-wrap gap-2 mt-4">
-                        <?php if (!empty($demande['justification_file'])): ?><a href="<?= UPLOAD_URL . e($demande['justification_file']) ?>" target="_blank" rel="noopener" class="btn btn-outline-primary"><i class="bi bi-paperclip me-1"></i>Consulter le justificatif</a><?php endif; ?>
+                        <?php if (!empty($demande['justification_file'])): ?><button type="button" class="btn btn-outline-primary" data-apercu-url="<?= e(UPLOAD_URL . $demande['justification_file']) ?>" data-apercu-nom="<?= e(basename($demande['justification_file'])) ?>"><i class="bi bi-eye me-1"></i>Aperçu du justificatif</button><a href="<?= e(UPLOAD_URL . $demande['justification_file']) ?>" target="_blank" rel="noopener" download class="btn btn-outline-success"><i class="bi bi-download me-1"></i>Télécharger</a><?php endif; ?>
                         <?php if (!empty($ordre) && empty($accesDepartement)): ?><a href="<?= APP_URL ?>/treasury/ordre-paiement/<?= (int)$demande['id'] ?>" class="btn btn-outline-dark"><i class="bi bi-file-earmark-check me-1"></i>Voir l’ordre de paiement</a><?php endif; ?>
                         <?php if ($canCancelOrder): ?><button class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#modalAnnulerOrdre"><i class="bi bi-x-circle me-1"></i>Annuler l’ordre</button><?php endif; ?>
                     </div>
@@ -219,9 +224,25 @@ document.addEventListener('DOMContentLoaded', function () {
             </div>
         </div>
 
-        <?php if ($canValidate || $canControl || $canResume): ?>
+        <?php if ($canValidate || $canControl || $canResume || $canChef): ?>
         <div class="col-lg-4">
             <div class="request-action-card">
+                    <?php if ($canChef): ?>
+                    <section class="card request-section-card mb-3"><div class="card-body p-4">
+                        <div class="request-eyebrow mb-2">Chef de département</div>
+                        <h2 class="h6 fw-bold">Vérifier et valider la demande</h2>
+                        <p class="tr-choice-note">Confirmez que le besoin de votre agent est justifié. La validation transmet la demande au Trésorier A ; le rejet la clôture et notifie le demandeur.</p>
+                        <form method="POST" action="<?= APP_URL ?>/treasury/demande-voir/<?= (int)$demande['id'] ?>">
+                            <input type="hidden" name="csrf_token" value="<?= genererTokenCSRF() ?>">
+                            <label for="chefComment" class="form-label">Observation <span class="text-muted fw-normal">(obligatoire en cas de rejet)</span></label>
+                            <textarea id="chefComment" name="commentaire" class="form-control mb-3" rows="3" placeholder="Éléments vérifiés, motif du rejet…"></textarea>
+                            <div class="d-grid gap-2">
+                                <button class="btn btn-primary" type="submit" name="action" value="chef_valider" onclick="return confirm('Valider cette demande et la transmettre au Trésorier A ?');"><i class="bi bi-check2-circle me-1"></i>Valider et transmettre à la trésorerie</button>
+                                <button class="btn btn-outline-danger" type="submit" name="action" value="chef_rejeter" onclick="var c=document.getElementById('chefComment'); if(!c.value.trim()){alert('Indiquez le motif du rejet.'); c.focus(); return false;} return confirm('Rejeter définitivement cette demande ?');"><i class="bi bi-x-circle me-1"></i>Rejeter la demande</button>
+                            </div>
+                        </form>
+                    </div></section>
+                    <?php endif; ?>
                     <?php if ($canControl): ?><section class="card request-section-card mb-3"><div class="card-body p-4"><div class="request-eyebrow mb-2">Trésorier A</div><h2 class="h6 fw-bold">Contrôler et transmettre</h2><p class="tr-choice-note">Vérifiez les lignes, la justification et le document joint. La transmission ouvre la validation du Comptable senior.</p><form method="POST" action="<?= APP_URL ?>/treasury/demande-voir/<?= (int)$demande['id'] ?>" class="js-confirm-form"><input type="hidden" name="csrf_token" value="<?= genererTokenCSRF() ?>"><input type="hidden" name="action" value="controler"><label for="controlComment" class="form-label">Observation du contrôle <span class="text-muted fw-normal">(facultatif)</span></label><textarea id="controlComment" name="commentaire" class="form-control mb-3" rows="3" placeholder="Éléments vérifiés, précision utile au comptable…"></textarea><button class="btn btn-primary w-100" type="submit"><i class="bi bi-send-check me-1"></i>Transmettre au Comptable senior</button></form></div></section><?php endif; ?>
                     <?php if ($canResume): ?><section class="card request-section-card mb-3"><div class="card-body p-4"><div class="request-eyebrow mb-2">Reprise du traitement</div><h2 class="h6 fw-bold">Lever la mise en suspens</h2><p class="tr-choice-note">La demande reprendra au même niveau : <?= e(treasuryUiLabel($demande['suspended_level'])) ?>. Vous pourrez ensuite enregistrer votre décision.</p><form method="POST" action="<?= APP_URL ?>/treasury/demande-valider/<?= (int)$demande['id'] ?>" class="js-confirm-form"><input type="hidden" name="csrf_token" value="<?= genererTokenCSRF() ?>"><input type="hidden" name="approval_level" value="<?= e($demande['suspended_level']) ?>"><input type="hidden" name="decision" value="reprendre"><label for="resumeComment" class="form-label">Observation de reprise <span class="text-muted fw-normal">(facultatif)</span></label><textarea id="resumeComment" name="commentaire" class="form-control mb-3" rows="3" placeholder="Le document ou la précision attendue a été reçu…"></textarea><button class="btn btn-primary w-100" type="submit"><i class="bi bi-play-circle me-1"></i>Reprendre l’examen</button></form></div></section><?php endif; ?>
                     <?php if ($canValidate): ?><div class="card section-card request-section-card">
@@ -249,7 +270,7 @@ document.addEventListener('DOMContentLoaded', function () {
 </div>
 
 <?php if ($canSubmit): ?>
-<div class="modal fade request-modal" id="modalSoumettre" tabindex="-1" aria-labelledby="modalSoumettreLabel" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><form method="POST" action="<?= APP_URL ?>/treasury/demande-voir/<?= (int)$demande['id'] ?>" class="modal-content js-confirm-form"><div class="modal-header"><div class="d-flex gap-3 align-items-center"><span class="request-modal-icon bg-primary-subtle text-primary"><i class="bi bi-send"></i></span><div><h5 class="modal-title fw-bold mb-1" id="modalSoumettreLabel">Soumettre la demande</h5><div class="small text-muted">Transmission au circuit d’approbation</div></div></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body p-4"><input type="hidden" name="csrf_token" value="<?= genererTokenCSRF() ?>"><input type="hidden" name="action" value="soumettre"><div class="request-modal-summary"><div class="d-flex justify-content-between gap-3 mb-2"><span class="text-muted small">Référence</span><strong><?= e($demande['request_number']) ?></strong></div><div class="d-flex justify-content-between gap-3"><span class="text-muted small">Montant</span><strong class="text-primary"><?= formatMontant((float)$demande['amount'], $demande['currency']) ?></strong></div></div><p class="small text-muted mt-3 mb-0">Après confirmation, la demande sera transmise au Trésorier A pour contrôle, puis au Comptable senior.</p></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Retour</button><button type="submit" class="btn btn-primary"><i class="bi bi-send me-1"></i>Confirmer la soumission</button></div></form></div></div>
+<div class="modal fade request-modal" id="modalSoumettre" tabindex="-1" aria-labelledby="modalSoumettreLabel" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><form method="POST" action="<?= APP_URL ?>/treasury/demande-voir/<?= (int)$demande['id'] ?>" class="modal-content js-confirm-form"><div class="modal-header"><div class="d-flex gap-3 align-items-center"><span class="request-modal-icon bg-primary-subtle text-primary"><i class="bi bi-send"></i></span><div><h5 class="modal-title fw-bold mb-1" id="modalSoumettreLabel">Soumettre la demande</h5><div class="small text-muted">Transmission au circuit d’approbation</div></div></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body p-4"><input type="hidden" name="csrf_token" value="<?= genererTokenCSRF() ?>"><input type="hidden" name="action" value="soumettre"><div class="request-modal-summary"><div class="d-flex justify-content-between gap-3 mb-2"><span class="text-muted small">Référence</span><strong><?= e($demande['request_number']) ?></strong></div><div class="d-flex justify-content-between gap-3"><span class="text-muted small">Montant</span><strong class="text-primary"><?= formatMontant((float)$demande['amount'], $demande['currency']) ?></strong></div></div><p class="small text-muted mt-3 mb-0">Après confirmation, la demande sera transmise <?= !empty($passeParChef) ? 'au chef de votre département pour validation, puis au Trésorier A pour contrôle' : 'au Trésorier A pour contrôle' ?>, puis au Comptable senior.</p></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Retour</button><button type="submit" class="btn btn-primary"><i class="bi bi-send me-1"></i>Confirmer la soumission</button></div></form></div></div>
 <?php endif; ?>
 
 <?php if ($canValidate): ?>

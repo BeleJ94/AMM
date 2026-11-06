@@ -721,3 +721,83 @@ function afficherToast(message, type = 'success') {
 // La variable APP_URL est définie dans le footer.php via une balise script
 // Pour l'utiliser, assurez-vous que footer.php contient :
 // <script>const APP_URL = '<?= APP_URL ?>';</script>
+
+// ============================================================
+// APERÇU DE FICHIERS (PDF / images) DANS UNE FENÊTRE MODALE
+//  - Lien/bouton : data-apercu-url="..." data-apercu-nom="..."
+//  - Champ fichier : <input type="file" data-apercu-local> → bouton « Aperçu » avant envoi
+// ============================================================
+(function () {
+    function extension(nom) {
+        var m = /\.([a-z0-9]+)(?:$|[?#])/i.exec(nom || '');
+        return m ? m[1].toLowerCase() : '';
+    }
+
+    function ouvrirApercu(url, nom, type) {
+        var modal = document.getElementById('ammModalApercu');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.className = 'modal fade';
+            modal.id = 'ammModalApercu';
+            modal.tabIndex = -1;
+            modal.innerHTML =
+                '<div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable"><div class="modal-content">' +
+                '<div class="modal-header"><h5 class="modal-title text-truncate"><i class="bi bi-file-earmark-text me-2"></i><span data-titre></span></h5>' +
+                '<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button></div>' +
+                '<div class="modal-body text-center" data-corps></div>' +
+                '<div class="modal-footer"><a class="btn btn-success" data-telecharger target="_blank" rel="noopener" download><i class="bi bi-download me-1"></i>Télécharger</a>' +
+                '<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Fermer</button></div>' +
+                '</div></div>';
+            document.body.appendChild(modal);
+            modal.addEventListener('hidden.bs.modal', function () { modal.querySelector('[data-corps]').innerHTML = ''; });
+        }
+        var ext = type === 'application/pdf' ? 'pdf' : (type && type.indexOf('image/') === 0 ? 'png' : extension(nom || url));
+        var corps = modal.querySelector('[data-corps]');
+        corps.innerHTML = '';
+        if (ext === 'pdf') {
+            var frame = document.createElement('iframe');
+            frame.src = url; frame.className = 'border rounded w-100'; frame.style.height = '75vh';
+            corps.appendChild(frame);
+        } else if (['jpg', 'jpeg', 'png', 'gif', 'webp'].indexOf(ext) !== -1) {
+            var img = document.createElement('img');
+            img.src = url; img.className = 'img-fluid rounded shadow-sm'; img.alt = nom || 'Aperçu';
+            corps.appendChild(img);
+        } else {
+            corps.innerHTML = '<div class="alert alert-info mb-0">L’aperçu intégré n’est pas disponible pour ce type de fichier. Utilisez le téléchargement.</div>';
+        }
+        modal.querySelector('[data-titre]').textContent = nom || 'Aperçu du document';
+        var lien = modal.querySelector('[data-telecharger]');
+        lien.href = url;
+        lien.setAttribute('download', nom || '');
+        bootstrap.Modal.getOrCreateInstance(modal).show();
+    }
+    window.ammOuvrirApercu = ouvrirApercu;
+
+    document.addEventListener('click', function (e) {
+        var cible = e.target.closest('[data-apercu-url]');
+        if (!cible) return;
+        e.preventDefault();
+        ouvrirApercu(cible.getAttribute('data-apercu-url'), cible.getAttribute('data-apercu-nom') || '');
+    });
+
+    document.addEventListener('change', function (e) {
+        var input = e.target;
+        if (!input.matches || !input.matches('input[type=file][data-apercu-local]')) return;
+        var bouton = input.parentNode.querySelector('.js-apercu-local');
+        if (input._apercuUrl) { URL.revokeObjectURL(input._apercuUrl); input._apercuUrl = null; }
+        var fichier = input.files && input.files[0];
+        if (!fichier) { if (bouton) bouton.remove(); return; }
+        input._apercuUrl = URL.createObjectURL(fichier);
+        if (!bouton) {
+            bouton = document.createElement('button');
+            bouton.type = 'button';
+            bouton.className = 'btn btn-outline-primary btn-sm mt-1 js-apercu-local';
+            bouton.innerHTML = '<i class="bi bi-eye me-1"></i>Aperçu du fichier sélectionné';
+            input.insertAdjacentElement('afterend', bouton);
+            bouton.addEventListener('click', function () {
+                var f = input.files && input.files[0];
+                if (f && input._apercuUrl) ouvrirApercu(input._apercuUrl, f.name, f.type);
+            });
+        }
+    });
+})();

@@ -4,10 +4,12 @@ if (!function_exists('treasuryUiLabel')) {
         $labels = [
             'brouillon' => 'Brouillon',
             'soumise' => 'Soumise',
+            'a_valider_chef' => 'À valider · Chef de département',
             'a_controler' => 'À contrôler · Trésorerie',
             'en_suspens' => 'En suspens',
             'repris' => 'Repris',
             'tresorier' => 'Trésorier',
+            'chef_service' => 'Chef de département',
             'validee_comptable' => 'Validée comptable',
             'validee_direction' => 'Validée direction',
             'rejetee' => 'Rejetée',

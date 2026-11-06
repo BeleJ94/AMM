@@ -82,7 +82,9 @@
         set('confirmDepartment', departmentField.value ? departmentField.options[departmentField.selectedIndex].text : '—');
         set('confirmBeneficiary', document.getElementById('beneficiaryField').value.trim());
         set('confirmObject', document.getElementById('objectField').value.trim());
-        set('confirmRequestNotice', action === 'submit' ? 'La demande sera transmise au Trésorier A pour contrôle, puis au Comptable senior. Les décisions seront consultables dans le suivi.' : 'La demande sera enregistrée en brouillon. Vous pourrez la consulter et la soumettre ultérieurement.');
+        var visaChef = []; try { visaChef = JSON.parse(form.dataset.visaChef || '[]'); } catch (e) {}
+        var parChef = visaChef.indexOf(parseInt(departmentField.value, 10)) !== -1;
+        set('confirmRequestNotice', action === 'submit' ? (parChef ? 'La demande sera transmise au chef de votre département pour validation, puis au Trésorier A pour contrôle et au Comptable senior. Les décisions seront consultables dans le suivi.' : 'La demande sera transmise au Trésorier A pour contrôle, puis au Comptable senior. Les décisions seront consultables dans le suivi.') : 'La demande sera enregistrée en brouillon. Vous pourrez la consulter et la soumettre ultérieurement.');
         set('confirmRequestButton', action === 'submit' ? 'Confirmer et soumettre' : 'Enregistrer le brouillon');
         bootstrap.Modal.getOrCreateInstance(modalEl).show();
     });

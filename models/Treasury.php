@@ -99,7 +99,7 @@ class Treasury {
 
         $stats['demandes_en_attente'] = (int)$this->pdo->query(
             "SELECT COUNT(*) FROM treasury_fund_requests
-             WHERE status IN ('a_controler','soumise','validee_comptable','en_suspens')"
+             WHERE status IN ('a_valider_chef','a_controler','soumise','validee_comptable','en_suspens')"
         )->fetchColumn();
 
         $stats['ordres_non_executes'] = (int)$this->pdo->query(
@@ -126,7 +126,7 @@ class Treasury {
         $stmt = $this->pdo->query(
             "SELECT
                 (SELECT COUNT(*) FROM treasury_fund_requests
-                 WHERE status IN ('a_controler','soumise','validee_comptable','validee_direction','en_suspens')) AS demandes_action,
+                 WHERE status IN ('a_valider_chef','a_controler','soumise','validee_comptable','validee_direction','en_suspens')) AS demandes_action,
                 (SELECT COUNT(*) FROM treasury_payment_orders WHERE status = 'emis') AS ordres_action,
                 (SELECT COUNT(*) FROM treasury_bank_statements
                  WHERE status IN ('brouillon','en_rapprochement')) AS rapprochements_action,
@@ -645,14 +645,72 @@ class Treasury {
     }
 
     public function soumettreDemande(int $id, int $userId): bool {
+        $demande = $this->trouverDemandeParId($id);
+        if (!$demande || $demande['status'] !== 'brouillon') { return false; }
+        if (trim((string)($demande['department'] ?? '')) === '') {
+            $statut = 'soumise';
+        } else {
+            // Une demande départementale passe d'abord par le chef du département, sauf si un chef de ce
+            // département l'a créée ou soumise, ou si le département n'a aucun chef actif.
+            $chefs = $this->chefsDepartement((int)($demande['department_id'] ?? 0));
+            $parUnChef = in_array($userId, $chefs, true) || in_array((int)$demande['created_by'], $chefs, true);
+            $statut = (!empty($chefs) && !$parUnChef) ? 'a_valider_chef' : 'a_controler';
+        }
         $stmt = $this->pdo->prepare(
-            "UPDATE treasury_fund_requests
-             SET status = CASE WHEN COALESCE(department, '') = '' THEN 'soumise' ELSE 'a_controler' END,
-                 submitted_by = ?, submitted_at = NOW()
+            "UPDATE treasury_fund_requests SET status = ?, submitted_by = ?, submitted_at = NOW()
              WHERE id = ? AND status = 'brouillon'"
         );
-        $stmt->execute([$userId, $id]);
+        $stmt->execute([$statut, $userId, $id]);
         return $stmt->rowCount() > 0;
+    }
+
+    /** Identifiants des chefs de service actifs rattachés au département. */
+    public function chefsDepartement(int $departmentId): array {
+        if ($departmentId <= 0) { return []; }
+        $stmt = $this->pdo->prepare("SELECT id FROM users WHERE role = 'chef_service' AND actif = 1 AND service_id = ?");
+        $stmt->execute([$departmentId]);
+        return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+    }
+
+    /** Départements dont une demande soumise par $userId passerait par le visa du chef. */
+    public function departementsAvecVisaChef(int $userId): array {
+        $stmt = $this->pdo->prepare(
+            "SELECT DISTINCT service_id FROM users
+             WHERE role = 'chef_service' AND actif = 1 AND service_id IS NOT NULL
+               AND service_id NOT IN (SELECT service_id FROM users WHERE id = ? AND role = 'chef_service' AND service_id IS NOT NULL)"
+        );
+        $stmt->execute([$userId]);
+        return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+    }
+
+    public function estChefDepartementDemande(array $demande, int $userId): bool {
+        return $userId > 0 && in_array($userId, $this->chefsDepartement((int)($demande['department_id'] ?? 0)), true);
+    }
+
+    /** Visa du chef de département : 'valide' transmet au Trésorier A, 'annule' clôt la demande avec motif. */
+    public function deciderChefDemande(int $id, int $userId, string $decision, string $commentaire = ''): bool {
+        $commentaire = trim($commentaire);
+        if ($userId <= 0 || !in_array($decision, ['valide', 'annule'], true)) { return false; }
+        if ($decision === 'annule' && $commentaire === '') { return false; }
+        try {
+            $this->pdo->beginTransaction();
+            $demande = $this->verrouillerDemande($id);
+            if (!$demande || $demande['status'] !== 'a_valider_chef' || $userId === (int)$demande['created_by']
+                || !$this->estChefDepartementDemande($demande, $userId)) { $this->pdo->rollBack(); return false; }
+            $this->enregistrerDecisionDemande($id, 'chef_service', $userId, $decision, $commentaire);
+            if ($decision === 'valide') {
+                $stmt = $this->pdo->prepare("UPDATE treasury_fund_requests SET status='a_controler' WHERE id=?");
+                $stmt->execute([$id]);
+            } else {
+                $stmt = $this->pdo->prepare("UPDATE treasury_fund_requests SET status='annulee', cancellation_reason=?, cancelled_by=?, cancelled_at=NOW() WHERE id=?");
+                $stmt->execute([$commentaire, $userId, $id]);
+            }
+            $this->pdo->commit();
+            return true;
+        } catch (Throwable $e) {
+            if ($this->pdo->inTransaction()) { $this->pdo->rollBack(); }
+            error_log('Erreur deciderChefDemande: ' . $e->getMessage()); return false;
+        }
     }
 
     public function validerDemande(int $id, string $niveau, int $userId, string $commentaire = ''): bool {
@@ -779,7 +837,7 @@ class Treasury {
              SET status = 'annulee', cancellation_reason = ?, cancelled_by = ?, cancelled_at = NOW(),
                  suspended_level = NULL, previous_status = NULL, reminder_date = NULL
              WHERE id = ?
-               AND status IN ('brouillon','a_controler','soumise','validee_comptable','validee_direction','rejetee','en_suspens')"
+               AND status IN ('brouillon','a_valider_chef','a_controler','soumise','validee_comptable','validee_direction','rejetee','en_suspens')"
         );
         $stmt->execute([$motif, $userId, $id]);
         return $stmt->rowCount() > 0;
@@ -1840,7 +1898,7 @@ class Treasury {
             $params[] = $filtres['date_fin'];
         }
 
-        $sql .= " GROUP BY status ORDER BY FIELD(status, 'brouillon','a_controler','soumise','en_suspens','validee_comptable','validee_direction','rejetee','ordre_emis','payee','annulee')";
+        $sql .= " GROUP BY status ORDER BY FIELD(status, 'brouillon','a_valider_chef','a_controler','soumise','en_suspens','validee_comptable','validee_direction','rejetee','ordre_emis','payee','annulee')";
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute($params);
         $rows = $stmt->fetchAll();

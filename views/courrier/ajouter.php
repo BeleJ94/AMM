@@ -132,12 +132,13 @@ $pageTitle = ($estModification ? 'Modifier' : 'Nouveau') . ' courrier — ' . AP
                             <!-- Fichier scan -->
                             <div class="col-md-6">
                                 <label class="form-label fw-semibold">Document scanné</label>
-                                <input type="file" class="form-control" name="fichier_scan"
+                                <input type="file" class="form-control" name="fichier_scan" data-apercu-local
                                        accept=".pdf,.jpg,.jpeg,.png">
                                 <small class="text-muted">PDF, JPG, PNG — max 10 Mo</small>
                                 <?php if (!empty($courrier['fichier_scan'])): ?>
                                     <div class="mt-1">
                                         <small class="text-success"><i class="bi bi-paperclip"></i> Fichier existant : <?= e($courrier['fichier_scan']) ?></small>
+                                        <button type="button" class="btn btn-link btn-sm p-0 ms-2" data-apercu-url="<?= e(UPLOAD_URL . $courrier['fichier_scan']) ?>" data-apercu-nom="<?= e(basename($courrier['fichier_scan'])) ?>"><i class="bi bi-eye"></i> Aperçu</button>
                                     </div>
                                 <?php endif; ?>
                             </div>

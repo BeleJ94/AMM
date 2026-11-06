@@ -9,6 +9,7 @@ if (!function_exists('treasuryRequestStatusBadge')) {
             case 'brouillon':
                 return 'secondary';
             case 'soumise':
+            case 'a_valider_chef':
             case 'a_controler':
             case 'en_suspens':
                 return 'warning text-dark';
@@ -59,6 +60,10 @@ if (!function_exists('treasuryRequestNextAction')) {
             'brouillon' => [
                 'label' => 'À compléter et soumettre', 'owner' => 'Demandeur',
                 'button' => 'Continuer', 'icon' => 'bi-pencil-square', 'tone' => 'secondary', 'url' => $detailUrl,
+            ],
+            'a_valider_chef' => [
+                'label' => 'Validation du chef de département', 'owner' => 'Chef de département',
+                'button' => 'Examiner', 'icon' => 'bi-person-check', 'tone' => 'primary', 'url' => $detailUrl,
             ],
             'a_controler' => [
                 'label' => 'Contrôle du dossier requis', 'owner' => 'Trésorier A',
@@ -121,6 +126,7 @@ $accesDepartement = $accesDepartement ?? false;
 $peutCreerDemande = $peutCreerDemande ?? false;
 $requestStateLabels = [
     'brouillon' => 'Brouillon',
+    'a_valider_chef' => 'Chef de dépt.',
     'a_controler' => 'À contrôler',
     'soumise' => 'À valider',
     'en_suspens' => 'En suspens',
@@ -132,6 +138,7 @@ $requestStateLabels = [
     'annulee' => 'Annulée',
 ];
 $requestFilterStates = [
+    'a_valider_chef' => 'Chef de département',
     'a_controler' => 'À contrôler', 'soumise' => 'À valider',
     'en_suspens' => 'En suspens', 'validee_comptable' => 'Direction',
     'validee_direction' => 'Prêtes pour ordre', 'payee' => 'Payées',
@@ -146,6 +153,7 @@ $requestFilterStates = [
 #tableDemandesFonds > tbody > tr.request-row-paid:hover > td:not(.request-state-cell) { --bs-table-bg-state:#dcfce7; }
 #tableDemandesFonds td.request-state-cell { --request-state-bg:#f1f5f9; --request-state-color:#475569; --bs-table-bg:var(--request-state-bg); --bs-table-bg-type:var(--request-state-bg); --bs-table-bg-state:var(--request-state-bg); --bs-table-color:var(--request-state-color); color:var(--request-state-color); background-color:var(--request-state-bg); font-size:.73rem; font-weight:700; text-align:center; white-space:nowrap; min-width:115px; }
 #tableDemandesFonds td.request-state-a_controler { --request-state-bg:#dbeafe; --request-state-color:#1e40af; }
+#tableDemandesFonds td.request-state-a_valider_chef { --request-state-bg:#e0e7ff; --request-state-color:#3730a3; }
 #tableDemandesFonds td.request-state-soumise { --request-state-bg:#fef3c7; --request-state-color:#92400e; }
 #tableDemandesFonds td.request-state-en_suspens { --request-state-bg:#fae8ff; --request-state-color:#86198f; }
 #tableDemandesFonds td.request-state-validee_comptable { --request-state-bg:#ede9fe; --request-state-color:#5b21b6; }

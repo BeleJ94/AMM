@@ -275,9 +275,16 @@
                                             <small class="text-muted d-block">Par <?= e($p['uploadeur'] ?? 'Inconnu') ?> — <?= formatDate(substr($p['uploaded_at'], 0, 10)) ?></small>
                                         </div>
                                         <?php if (!empty($p['fichier'])): ?>
-                                            <a href="<?= UPLOAD_URL . $p['fichier'] ?>" target="_blank" class="btn btn-sm btn-outline-primary">
-                                                <i class="bi bi-download"></i>
-                                            </a>
+                                            <div class="d-flex gap-1 align-self-start">
+                                                <button type="button" class="btn btn-sm btn-outline-primary" title="Aperçu"
+                                                        data-apercu-url="<?= e(UPLOAD_URL . $p['fichier']) ?>"
+                                                        data-apercu-nom="<?= e(basename($p['fichier'])) ?>">
+                                                    <i class="bi bi-eye"></i>
+                                                </button>
+                                                <a href="<?= e(UPLOAD_URL . $p['fichier']) ?>" target="_blank" rel="noopener" download class="btn btn-sm btn-outline-success" title="Télécharger">
+                                                    <i class="bi bi-download"></i>
+                                                </a>
+                                            </div>
                                         <?php endif; ?>
                                     </div>
                                 </li>
@@ -299,7 +306,7 @@
                                 </select>
                             </div>
                             <div class="col-md-4">
-                                <input type="file" class="form-control form-control-sm" name="fichier"
+                                <input type="file" class="form-control form-control-sm" name="fichier" data-apercu-local
                                        accept=".pdf,.jpg,.jpeg,.png">
                             </div>
                             <div class="col-md-4">

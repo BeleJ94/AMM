@@ -771,10 +771,10 @@ class TreasuryController {
                         logAudit('Création demande de fonds #' . $id, 'treasury_fund_requests', $id);
                         if (!empty($_POST['soumettre'])) {
                             if (!$this->treasuryModel->soumettreDemande($id, (int)$_SESSION['user_id'])) throw new RuntimeException('La demande a été enregistrée mais sa transmission a échoué. Retrouvez-la dans vos brouillons.');
-                            $this->notifierTresoriersDemande($id);
-                            logAudit('Transmission au contrôle trésorerie #' . $id, 'treasury_fund_requests', $id);
+                            $messageTransmission = $this->notifierApresSoumission($id);
+                            logAudit('Transmission demande de fonds #' . $id, 'treasury_fund_requests', $id);
                         }
-                        flashMessage('succes', !empty($_POST['soumettre']) ? 'Demande transmise au trésorier pour contrôle.' : 'Brouillon enregistré. Vous pouvez le transmettre au trésorier depuis sa fiche.');
+                        flashMessage('succes', !empty($_POST['soumettre']) ? $messageTransmission : 'Brouillon enregistré. Vous pouvez le transmettre depuis sa fiche.');
                         redirect('/treasury/demande-voir/' . $id);
                     } catch (Throwable $e) {
                         error_log('Création demande : ' . $e->getMessage());
@@ -783,7 +783,8 @@ class TreasuryController {
                 }
             }
         }
-        $this->render('demande_ajouter', compact('erreurs', 'categories', 'comptes', 'accesDepartement', 'departements', 'departementAffecte'));
+        $departementsVisaChef = $this->treasuryModel->departementsAvecVisaChef((int)$_SESSION['user_id']);
+        $this->render('demande_ajouter', compact('erreurs', 'categories', 'comptes', 'accesDepartement', 'departements', 'departementAffecte', 'departementsVisaChef'));
     }
     public function voirDemande(?string $id): void {
         verifierSession();
@@ -791,6 +792,9 @@ class TreasuryController {
         $demande = $this->demandeAccessible((int)$id);
         $peutSoumettre = $demande['status'] === 'brouillon' && (int)$demande['created_by'] === (int)$_SESSION['user_id'] && ($_SESSION['user_role'] ?? '') !== 'auditeur_interne';
         $peutControlerDemande = $demande['status'] === 'a_controler' && $this->peutControlerDemandes();
+        $peutValiderChef = $demande['status'] === 'a_valider_chef'
+            && (int)$demande['created_by'] !== (int)$_SESSION['user_id']
+            && $this->treasuryModel->estChefDepartementDemande($demande, (int)$_SESSION['user_id']);
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!validerTokenCSRF($_POST['csrf_token'] ?? '')) {
                 flashMessage('erreur', 'La session du formulaire a expiré.');
@@ -798,9 +802,26 @@ class TreasuryController {
             }
             $action = $_POST['action'] ?? '';
             $ok = false;
+            $messageSucces = 'Opération enregistrée.';
             if ($action === 'soumettre' && $peutSoumettre) {
                 $ok = $this->treasuryModel->soumettreDemande((int)$id, (int)$_SESSION['user_id']);
-                if ($ok) $this->notifierTresoriersDemande((int)$id);
+                if ($ok) $messageSucces = $this->notifierApresSoumission((int)$id);
+            } elseif (in_array($action, ['chef_valider', 'chef_rejeter'], true) && $peutValiderChef) {
+                $commentaire = trim((string)($_POST['commentaire'] ?? ''));
+                $decision = $action === 'chef_valider' ? 'valide' : 'annule';
+                if ($decision === 'annule' && $commentaire === '') {
+                    flashMessage('erreur', 'Indiquez le motif du rejet.');
+                    redirect('/treasury/demande-voir/' . (int)$id);
+                }
+                $ok = $this->treasuryModel->deciderChefDemande((int)$id, (int)$_SESSION['user_id'], $decision, $commentaire);
+                if ($ok && $decision === 'valide') {
+                    $this->notifierTresoriersDemande((int)$id);
+                    $this->notifierCreateurDemande($demande, 'Votre demande ' . $demande['request_number'] . ' a été validée par votre chef de département et transmise à la trésorerie.');
+                    $messageSucces = 'Demande validée et transmise au Trésorier A pour contrôle.';
+                } elseif ($ok) {
+                    $this->notifierCreateurDemande($demande, 'Votre demande ' . $demande['request_number'] . ' a été rejetée par votre chef de département : ' . $commentaire);
+                    $messageSucces = 'Demande rejetée. Le demandeur a été notifié.';
+                }
             } elseif ($action === 'controler' && $peutControlerDemande) {
                 $commentaire = trim((string)($_POST['commentaire'] ?? ''));
                 $ok = $this->treasuryModel->controlerDemande((int)$id, (int)$_SESSION['user_id'], $commentaire);
@@ -810,7 +831,7 @@ class TreasuryController {
                 }
             }
             if ($ok) logAudit('Demande de fonds : ' . $action, 'treasury_fund_requests', (int)$id);
-            flashMessage($ok ? 'succes' : 'erreur', $ok ? ($action === 'controler' ? 'Contrôle enregistré. La demande est transmise au comptable senior.' : 'Demande transmise au trésorier pour contrôle.') : 'Cette action n’est pas disponible pour votre profil ou pour l’état actuel de la demande.');
+            flashMessage($ok ? 'succes' : 'erreur', $ok ? ($action === 'controler' ? 'Contrôle enregistré. La demande est transmise au comptable senior.' : $messageSucces) : 'Cette action n’est pas disponible pour votre profil ou pour l’état actuel de la demande.');
             redirect('/treasury/demande-voir/' . (int)$id);
         }
         $validations = $this->treasuryModel->validationsDemande((int)$id);
@@ -829,7 +850,14 @@ class TreasuryController {
         $peutEmettreOrdre = accesGlobalDemandesFonds() && $this->peutEmettreOrdre() && $this->respecteSeparationTachesDemande($demande);
         $peutCreerDemande = ($_SESSION['user_role'] ?? '') !== 'auditeur_interne';
         $accesDepartement = !accesGlobalDemandesFonds();
-        $this->render('demande_voir', compact('demande','validations','lignesDemande','ordre','niveauxValidationAutorises','peutAnnulerDemande','peutEmettreOrdre','peutSoumettre','peutControlerDemande','peutCreerDemande','accesDepartement'));
+        $departementsVisaChef = $this->treasuryModel->departementsAvecVisaChef((int)($demande['created_by'] ?? 0));
+        $chefsAttendus = [];
+        if ($demande['status'] === 'a_valider_chef' && !empty($demande['department_id'])) {
+            $stmt = getDB()->prepare("SELECT nom FROM users WHERE role = 'chef_service' AND actif = 1 AND service_id = ? ORDER BY nom");
+            $stmt->execute([(int)$demande['department_id']]);
+            $chefsAttendus = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        }
+        $this->render('demande_voir', compact('demande','validations','lignesDemande','ordre','niveauxValidationAutorises','peutAnnulerDemande','peutEmettreOrdre','peutSoumettre','peutControlerDemande','peutValiderChef','peutCreerDemande','accesDepartement','departementsVisaChef','chefsAttendus'));
     }
 
     public function pdfDemande(?string $id): void {
@@ -2433,7 +2461,7 @@ class TreasuryController {
     }
 
     private function definitionRegistreDemandes(): array {
-        $statusAutorises = ['brouillon','a_controler','en_suspens','soumise','validee_comptable','validee_direction','rejetee','ordre_emis','payee','annulee'];
+        $statusAutorises = ['brouillon','a_valider_chef','a_controler','en_suspens','soumise','validee_comptable','validee_direction','rejetee','ordre_emis','payee','annulee'];
         $urgencesAutorisees = ['basse','moyenne','haute'];
         $status = in_array($_GET['status'] ?? '', $statusAutorises, true) ? $_GET['status'] : '';
         $urgence = in_array($_GET['urgency'] ?? '', $urgencesAutorisees, true) ? $_GET['urgency'] : '';
@@ -2466,6 +2494,7 @@ class TreasuryController {
 
     private function libelleTresorerie(string $value): string {
         $labels = [
+            'a_valider_chef' => 'À valider · Chef de département',
             'a_controler' => 'À contrôler · Trésorerie',
             'en_suspens' => 'En suspens',
             'brouillon' => 'Brouillon',
@@ -2536,6 +2565,19 @@ class TreasuryController {
         if (($_SESSION['user_role'] ?? '') === 'auditeur_interne') return false;
         $service = $this->normaliserService((string)($_SESSION['user_service'] ?? ''));
         return in_array($_SESSION['user_role'] ?? '', ['admin','tresorier'], true) || strpos($service, 'tresorerie') !== false;
+    }
+
+    /** Notifie l'étape suivante après soumission et retourne le message de confirmation. */
+    private function notifierApresSoumission(int $id): string {
+        $demande = $this->treasuryModel->trouverDemandeParId($id);
+        if ($demande && $demande['status'] === 'a_valider_chef') {
+            foreach ($this->treasuryModel->chefsDepartement((int)$demande['department_id']) as $chefId) {
+                creerNotification($chefId, 'demande_controle', 'Demande ' . $demande['request_number'] . ' : validation du chef de département attendue.', APP_URL . '/treasury/demande-voir/' . $id);
+            }
+            return 'Demande transmise à votre chef de département pour validation.';
+        }
+        $this->notifierTresoriersDemande($id);
+        return 'Demande transmise au trésorier pour contrôle.';
     }
 
     private function notifierTresoriersDemande(int $id): void {
