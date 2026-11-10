@@ -329,7 +329,17 @@ class FinancialTracking {
                 }
             }
 
-            $stmt = $this->pdo->prepare('SELECT id FROM treasury_receipts WHERE financial_transaction_id = ? FOR UPDATE');
+            // Versements d'encaissement (circuit en 4 étapes) portant cette écriture.
+            $stmt = $this->pdo->prepare("SELECT id, receipt_id FROM treasury_receipt_collections WHERE financial_transaction_id = ? AND status = 'valide' FOR UPDATE");
+            $stmt->execute([$id]);
+            $collections = $stmt->fetchAll();
+            // Encaissements historiques liés directement à l'écriture, sans versement repris.
+            $stmt = $this->pdo->prepare(
+                'SELECT r.id FROM treasury_receipts r
+                 WHERE r.financial_transaction_id = ?
+                   AND NOT EXISTS (SELECT 1 FROM treasury_receipt_collections c WHERE c.receipt_id = r.id AND c.financial_transaction_id = r.financial_transaction_id)
+                 FOR UPDATE'
+            );
             $stmt->execute([$id]);
             $receiptIds = $stmt->fetchAll(PDO::FETCH_COLUMN);
             $stmt = $this->pdo->prepare(
@@ -339,7 +349,7 @@ class FinancialTracking {
             );
             $stmt->execute([$id]);
             $payments = $stmt->fetchAll();
-            if (count($receiptIds) + count($payments) > 1) {
+            if (count($receiptIds) + count($collections) + count($payments) > 1) {
                 throw new DomainException('Plusieurs opérations sont liées à cette transaction. Un contrôle comptable est nécessaire avant annulation.');
             }
 
@@ -355,6 +365,14 @@ class FinancialTracking {
                 );
                 $stmt->execute([$userId, $motif, (int)$receiptId]);
             }
+            foreach ($collections as $collection) {
+                $stmt = $this->pdo->prepare(
+                    "UPDATE treasury_receipt_collections SET status = 'annule', cancelled_by = ?, cancelled_at = NOW(), cancellation_reason = ? WHERE id = ?"
+                );
+                $stmt->execute([$userId, $motif, (int)$collection['id']]);
+                require_once __DIR__ . '/Treasury.php';
+                (new Treasury())->recalculerRecouvrement((int)$collection['receipt_id'], $userId, $motif);
+            }
             foreach ($payments as $payment) {
                 $stmt = $this->pdo->prepare(
                     'UPDATE treasury_payments SET cancelled_by = ?, cancelled_at = NOW(), cancellation_reason = ? WHERE id = ?'
@@ -369,7 +387,7 @@ class FinancialTracking {
                 );
                 $stmt->execute([$userId, $motif, (int)$payment['request_id']]);
             }
-            if ($cashSessionId !== null && ($receiptIds || $payments)) {
+            if ($cashSessionId !== null && ($receiptIds || $collections || $payments)) {
                 require_once __DIR__ . '/Treasury.php';
                 if (!(new Treasury())->recalculerSessionCaisse((int)$transaction['compte_id'], $transaction['date_operation'])) {
                     throw new RuntimeException('Recalcul de la journée de caisse impossible.');

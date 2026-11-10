@@ -97,6 +97,26 @@ class TreasuryController {
                 ];
             }
         }
+        // Encaissements en attente d'une étape que l'utilisateur peut franchir.
+        foreach ($this->treasuryModel->listerEncaissements(['status' => 'en_cours'], 60, 0) as $recette) {
+            $droitsRecette = $this->droitsEncaissement($recette);
+            if (!$droitsRecette['liquider'] && !$droitsRecette['ordonnancer'] && !$droitsRecette['recouvrer']) continue;
+            $action = $this->actionEncaissement($recette);
+            $ancre = $recette['ordered_at'] ?? $recette['liquidated_at'] ?? $recette['created_at'];
+            $actionsPrioritaires[] = [
+                'type' => 'Encaissement',
+                'reference' => $recette['title_number'] ?: $recette['receipt_number'],
+                'label' => $action['label'],
+                'owner' => $action['owner'],
+                'beneficiary' => $recette['payer_name'],
+                'amount' => formatMontant((float)$recette['amount'], $recette['currency']),
+                'amount_usd' => (float)$recette['amount_usd'],
+                'waiting_days' => max(0, (int)floor((time() - strtotime((string)$ancre)) / 86400)),
+                'url' => APP_URL . '/treasury/encaissement-voir/' . (int)$recette['id'],
+                'button' => $action['button'],
+                'tone' => $action['tone'],
+            ];
+        }
         usort($actionsPrioritaires, static function ($a, $b) {
             if ($a['waiting_days'] === $b['waiting_days']) return $b['amount_usd'] <=> $a['amount_usd'];
             return $b['waiting_days'] <=> $a['waiting_days'];
@@ -146,50 +166,68 @@ class TreasuryController {
         $encaissements = $this->treasuryModel->listerEncaissements($filtres, 5000, 0);
         $tousEncaissements = $this->treasuryModel->listerEncaissements([], 5000, 0);
         $comptes = $this->financeModel->listerComptes();
-        $receiptStats = ['total'=>count($tousEncaissements),'brouillon'=>0,'valide'=>0,'annule'=>0,'montant_valide_usd'=>0.0];
+
+        // Regroupement des statuts par étape du circuit (les anciens statuts sont rattachés à leur équivalent).
+        $etapeDe = static function (string $status): string {
+            return ['brouillon' => 'constate', 'valide' => 'recouvre', 'partiellement_recouvre' => 'a_recouvrer', 'ordonnance' => 'a_recouvrer'][$status] ?? $status;
+        };
+        $receiptStats = ['total' => count($tousEncaissements), 'constate' => 0, 'liquide' => 0, 'a_recouvrer' => 0, 'recouvre' => 0, 'annule' => 0,
+            'montant_recouvre_usd' => 0.0, 'reste_a_recouvrer_usd' => 0.0];
         foreach ($tousEncaissements as $encaissement) {
-            $status = (string)$encaissement['status'];
-            if (isset($receiptStats[$status])) $receiptStats[$status]++;
-            if ($status === 'valide') $receiptStats['montant_valide_usd'] += (float)$encaissement['amount_usd'];
+            $etape = $etapeDe((string)$encaissement['status']);
+            if (isset($receiptStats[$etape])) $receiptStats[$etape]++;
+            if ($encaissement['status'] !== 'annule') $receiptStats['montant_recouvre_usd'] += (float)$encaissement['amount_collected_usd'];
+            if ($etape === 'a_recouvrer') $receiptStats['reste_a_recouvrer_usd'] += (float)$encaissement['remaining_amount_usd'];
         }
         $receiptKpiDetails = [];
         $definitions = [
-            'total'=>['title'=>'Tous les encaissements','subtitle'=>'Vue consolidée du registre des recettes'],
-            'brouillon'=>['title'=>'Encaissements à valider','subtitle'=>'Reçus enregistrés en attente de contrôle'],
-            'valide'=>['title'=>'Encaissements validés','subtitle'=>'Recettes comptabilisées et intégrées à la trésorerie'],
-            'annule'=>['title'=>'Encaissements annulés','subtitle'=>'Reçus clôturés sans comptabilisation'],
+            'total' => ['title' => 'Tous les encaissements', 'subtitle' => 'Vue consolidée du registre des recettes'],
+            'constate' => ['title' => 'Créances à liquider', 'subtitle' => 'Créances constatées en attente de la liquidation (comptable senior)'],
+            'liquide' => ['title' => 'Créances à ordonnancer', 'subtitle' => 'Montants arrêtés en attente du titre de recette (direction financière)'],
+            'a_recouvrer' => ['title' => 'Titres à recouvrer', 'subtitle' => 'Titres de recette émis, non encore totalement encaissés (trésorerie)'],
+            'recouvre' => ['title' => 'Encaissements recouvrés', 'subtitle' => 'Recettes entièrement encaissées et comptabilisées'],
+            'annule' => ['title' => 'Encaissements annulés', 'subtitle' => 'Dossiers clôturés sans recouvrement'],
         ];
-        foreach ($definitions as $metric=>$definition) {
-            $lignes = $metric === 'total' ? $tousEncaissements : array_values(array_filter($tousEncaissements, static function ($ligne) use ($metric) {
-                return ($ligne['status'] ?? '') === $metric;
+        foreach ($definitions as $metric => $definition) {
+            $lignes = $metric === 'total' ? $tousEncaissements : array_values(array_filter($tousEncaissements, static function ($ligne) use ($metric, $etapeDe) {
+                return $etapeDe((string)($ligne['status'] ?? '')) === $metric;
             }));
             $totalUsd = array_sum(array_map(static function ($ligne) { return (float)$ligne['amount_usd']; }, $lignes));
             $receiptKpiDetails[$metric] = [
-                'title'=>$definition['title'],'subtitle'=>$definition['subtitle'],'count'=>count($lignes),
-                'total_usd'=>$totalUsd,'average_usd'=>count($lignes)?$totalUsd/count($lignes):0,
-                'rows'=>array_map(function ($ligne) {
-                    $status = (string)$ligne['status'];
+                'title' => $definition['title'], 'subtitle' => $definition['subtitle'], 'count' => count($lignes),
+                'total_usd' => $totalUsd, 'average_usd' => count($lignes) ? $totalUsd / count($lignes) : 0,
+                'rows' => array_map(function ($ligne) {
+                    $action = $this->actionEncaissement($ligne);
                     return [
-                        'number'=>$ligne['receipt_number'],'date'=>formatDate($ligne['date_receipt']),
-                        'payer'=>$ligne['payer_name'],'object'=>$ligne['objet'],'account'=>$ligne['account_nom']??'—',
-                        'method'=>$this->libelleTresorerie($ligne['payment_method']),
-                        'amount'=>formatMontant((float)$ligne['amount'],$ligne['currency']),
-                        'amount_usd'=>(float)$ligne['amount_usd'],'status'=>$this->libelleTresorerie($status),
-                        'action'=>$status==='brouillon'?'Validation requise':($status==='valide'?'Recette comptabilisée':'Encaissement annulé'),
-                        'url'=>APP_URL.'/treasury/encaissement-voir/'.(int)$ligne['id'],
+                        'number' => $ligne['receipt_number'], 'date' => formatDate($ligne['date_receipt']),
+                        'payer' => $ligne['payer_name'], 'object' => $ligne['objet'], 'account' => $ligne['account_nom'] ?? '—',
+                        'method' => !empty($ligne['payment_method']) ? $this->libelleTresorerie($ligne['payment_method']) : 'À déterminer',
+                        'amount' => formatMontant((float)$ligne['amount'], $ligne['currency']),
+                        'amount_usd' => (float)$ligne['amount_usd'], 'status' => $this->libelleEtapeEncaissement((string)$ligne['status']),
+                        'action' => $action['label'],
+                        'url' => APP_URL . '/treasury/encaissement-voir/' . (int)$ligne['id'],
                     ];
                 }, $lignes),
             ];
         }
 
-        $this->render('encaissements', compact('filtres', 'encaissements', 'comptes', 'receiptStats', 'receiptKpiDetails'));
+        $peutConstater = $this->peutOpererTresorerie();
+        $peutComptant = $this->peutExecuterPaiement();
+        $this->render('encaissements', compact('filtres', 'encaissements', 'comptes', 'receiptStats', 'receiptKpiDetails', 'peutConstater', 'peutComptant'));
     }
 
+    /** Étape 1 (constatation) ou encaissement comptant au guichet (?mode=comptant). */
     public function ajouterEncaissement(): void {
         $this->verifierAccesTresorerie('operation');
 
         $erreurs = [];
         $comptes = $this->financeModel->listerComptes();
+        $categories = $this->financeModel->listerCategories('revenu');
+        $modeComptant = ($_POST['mode'] ?? $_GET['mode'] ?? '') === 'comptant';
+        if ($modeComptant && !$this->peutExecuterPaiement()) {
+            flashMessage('erreur', 'L’encaissement comptant est réservé à la trésorerie (caisse).');
+            redirect('/treasury/encaissement-ajouter');
+        }
 
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!validerTokenCSRF($_POST['csrf_token'] ?? '')) {
@@ -207,35 +245,40 @@ class TreasuryController {
                     'date_receipt' => $_POST['date_receipt'] ?? date('Y-m-d'),
                     'payer_name' => trim($_POST['payer_name'] ?? ''),
                     'objet' => trim($_POST['objet'] ?? ''),
+                    'category_id' => (int)($_POST['category_id'] ?? 0),
                     'amount' => (float)($_POST['amount'] ?? 0),
                     'currency' => $_POST['currency'] ?? 'USD',
                     'exchange_rate' => (float)($_POST['exchange_rate'] ?? 0),
-                    'payment_method' => $_POST['payment_method'] ?? '',
-                    'account_id' => (int)($_POST['account_id'] ?? 0),
+                    'payment_method' => $modeComptant ? ($_POST['payment_method'] ?? '') : '',
+                    'account_id' => $modeComptant ? (int)($_POST['account_id'] ?? 0) : 0,
                     'proof_file' => $preuve,
                     'reference_payment' => trim($_POST['reference_payment'] ?? ''),
                     'notes' => trim($_POST['notes'] ?? ''),
                     'created_by' => (int)($_SESSION['user_id'] ?? 0),
                 ];
 
-                $this->validerDonneesEncaissement($donnees, $erreurs);
+                $this->validerDonneesEncaissement($donnees, $erreurs, $modeComptant);
 
                 if (empty($erreurs)) {
                     try {
-                        $id = $this->treasuryModel->creerEncaissement($donnees);
-                        logAudit('Creation encaissement tresorerie #' . $id, 'treasury_receipts', $id);
-                        $_SESSION['encaissement_swal'] = [
-                            'icon' => 'success',
-                            'title' => 'Encaissement enregistré',
-                            'text' => 'Le reçu a été créé en brouillon avec succès.',
-                        ];
+                        if ($modeComptant) {
+                            $id = $this->treasuryModel->encaisserComptant($donnees, (int)$_SESSION['user_id']);
+                            logAudit('Encaissement comptant tresorerie #' . $id, 'treasury_receipts', $id);
+                            $swal = ['Encaissement comptant enregistré', 'Le reçu est émis et la recette est comptabilisée. Il sera contrôlé a posteriori.'];
+                        } else {
+                            $id = $this->treasuryModel->creerEncaissement($donnees);
+                            logAudit('Constatation encaissement tresorerie #' . $id, 'treasury_receipts', $id);
+                            $swal = ['Créance constatée', 'La créance est enregistrée. Elle doit maintenant être liquidée par le comptable senior.'];
+                        }
+                        $_SESSION['encaissement_swal'] = ['icon' => 'success', 'title' => $swal[0], 'text' => $swal[1]];
                         redirect('/treasury/encaissement-voir/' . $id);
                     } catch (DomainException $e) { $erreurs[] = $e->getMessage(); }
                 }
             }
         }
 
-        $this->render('encaissement_ajouter', compact('erreurs', 'comptes'));
+        $peutComptant = $this->peutExecuterPaiement();
+        $this->render('encaissement_ajouter', compact('erreurs', 'comptes', 'categories', 'modeComptant', 'peutComptant'));
     }
 
     public function voirEncaissement(?string $id): void {
@@ -251,36 +294,69 @@ class TreasuryController {
         }
 
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $retour = '/treasury/encaissement-voir/' . (int)$id;
             if (!validerTokenCSRF($_POST['csrf_token'] ?? '')) {
                 flashMessage('erreur', 'Requête invalide.');
-                redirect('/treasury/encaissement-voir/' . (int)$id);
+                redirect($retour);
             }
-
             $this->verifierAccesTresorerie('operation');
-            if (!$this->peutValiderEncaissement()) {
-                flashMessage('erreur', 'Droits insuffisants pour valider un encaissement.');
-                redirect('/treasury/encaissement-voir/' . (int)$id);
+            $userId = (int)($_SESSION['user_id'] ?? 0);
+            $action = (string)($_POST['action'] ?? '');
+            $droits = $this->droitsEncaissement($encaissement);
+            $commentaire = trim((string)($_POST['commentaire'] ?? ''));
+            try {
+                switch ($action) {
+                    case 'liquider':
+                        if (!$droits['liquider']) throw new DomainException('Droits insuffisants pour liquider cette créance.');
+                        $this->treasuryModel->liquiderEncaissement((int)$id, $userId, (float)($_POST['amount'] ?? 0), $commentaire);
+                        $message = 'Créance liquidée. Elle doit maintenant être ordonnancée par la direction financière.';
+                        break;
+                    case 'ordonnancer':
+                        if (!$droits['ordonnancer']) throw new DomainException('Droits insuffisants pour ordonnancer cette créance.');
+                        $this->treasuryModel->ordonnancerEncaissement((int)$id, $userId, (string)($_POST['due_date'] ?? ''), $commentaire);
+                        $message = 'Titre de recette émis. Le recouvrement peut être enregistré par la trésorerie.';
+                        break;
+                    case 'recouvrer':
+                        if (!$droits['recouvrer']) throw new DomainException('Droits insuffisants pour enregistrer un recouvrement.');
+                        $preuve = null;
+                        if (!empty($_FILES['proof_file']['name'])) {
+                            $preuve = traiterUpload($_FILES['proof_file'], 'treasury');
+                            if ($preuve === false) throw new DomainException('Pièce justificative invalide.');
+                        }
+                        $this->treasuryModel->recouvrerEncaissement((int)$id, $userId, [
+                            'amount' => (float)($_POST['amount'] ?? 0),
+                            'payment_method' => (string)($_POST['payment_method'] ?? ''),
+                            'account_id' => (int)($_POST['account_id'] ?? 0),
+                            'collection_date' => (string)($_POST['collection_date'] ?? date('Y-m-d')),
+                            'reference_payment' => trim((string)($_POST['reference_payment'] ?? '')),
+                            'proof_file' => $preuve,
+                        ]);
+                        $message = 'Recouvrement enregistré et comptabilisé sur le compte crédité.';
+                        break;
+                    case 'renvoyer':
+                        if (!$droits['renvoyer']) throw new DomainException('Droits insuffisants pour renvoyer ce dossier.');
+                        $this->treasuryModel->renvoyerEncaissement((int)$id, $userId, $commentaire);
+                        $message = 'Dossier renvoyé à l’étape précédente.';
+                        break;
+                    default:
+                        redirect($retour);
+                }
+                logAudit('Encaissement #' . (int)$id . ' : ' . $action, 'treasury_receipts', (int)$id, $commentaire !== '' ? $commentaire : null);
+                flashMessage('succes', $message);
+            } catch (DomainException $e) {
+                flashMessage('erreur', $e->getMessage());
+            } catch (Throwable $e) {
+                error_log('Erreur encaissement ' . $action . ' : ' . $e->getMessage());
+                flashMessage('erreur', 'L’opération n’a pas pu être enregistrée.');
             }
-
-            $action = $_POST['action'] ?? 'valider';
-            if ($action !== 'valider') {
-                redirect('/treasury/encaissement-voir/' . (int)$id);
-            }
-
-            try { $ok = $this->treasuryModel->validerEncaissement((int)$id, (int)($_SESSION['user_id'] ?? 0)); } catch (DomainException $e) {
-            flashMessage('erreur', $e->getMessage());
-            redirect('/treasury/encaissement-voir/' . (int)$id);
+            redirect($retour);
         }
-            if ($ok) {
-                logAudit('Validation encaissement tresorerie #' . (int)$id, 'treasury_receipts', (int)$id);
-                flashMessage('succes', 'Encaissement valide et transaction financiere creee.');
-            } else {
-                flashMessage('erreur', 'Impossible de valider cet encaissement.');
-            }
-            redirect('/treasury/encaissement-voir/' . (int)$id);
-        }
 
-        $this->render('encaissement_voir', compact('encaissement'));
+        $versements = $this->treasuryModel->versementsEncaissement((int)$id);
+        $etapes = $this->treasuryModel->etapesEncaissement((int)$id);
+        $droits = $this->droitsEncaissement($encaissement);
+        $comptes = $this->financeModel->listerComptes();
+        $this->render('encaissement_voir', compact('encaissement', 'versements', 'etapes', 'droits', 'comptes'));
     }
 
     /** Génère le reçu officiel au format PDF (aperçu inline ou téléchargement). */
@@ -306,6 +382,10 @@ class TreasuryController {
         if (is_file($logoPath)) {
             $logoDataUri = 'data:image/jpeg;base64,' . base64_encode((string)file_get_contents($logoPath));
         }
+        $versements = $this->treasuryModel->versementsEncaissement((int)$id);
+        // Document produit : reçu dès qu'un versement existe, titre de recette après ordonnancement, sinon fiche de créance.
+        $typeDocument = (float)$encaissement['amount_collected'] > 0 ? 'recu' : (!empty($encaissement['title_number']) ? 'titre' : 'creance');
+        if (($_GET['doc'] ?? '') === 'titre' && !empty($encaissement['title_number'])) $typeDocument = 'titre';
 
         ob_start();
         require __DIR__ . '/../views/treasury/encaissement_pdf.php';
@@ -361,7 +441,7 @@ class TreasuryController {
         $dompdf->setPaper('A4', 'portrait');
         $dompdf->render();
 
-        $numero = preg_replace('/[^A-Za-z0-9_-]+/', '-', (string)$encaissement['receipt_number']);
+        $numero = preg_replace('/[^A-Za-z0-9_-]+/', '-', (string)($typeDocument === 'titre' ? $encaissement['title_number'] : $encaissement['receipt_number']));
         $telecharger = isset($_GET['download']) && $_GET['download'] === '1';
         $dompdf->stream(($numero ?: 'recu-encaissement') . '.pdf', ['Attachment' => $telecharger]);
         exit;
@@ -2516,14 +2596,22 @@ class TreasuryController {
         return $labels[$value] ?? ucfirst(str_replace('_', ' ', $value));
     }
 
-    private function validerDonneesEncaissement(array $donnees, array &$erreurs): void {
-        if ($donnees['payer_name'] === '') $erreurs[] = 'Le payeur est obligatoire.';
+    private function validerDonneesEncaissement(array $donnees, array &$erreurs, bool $avecPaiement = true): void {
+        if ($donnees['payer_name'] === '') $erreurs[] = 'Le débiteur est obligatoire.';
         if ($donnees['objet'] === '') $erreurs[] = 'L’objet est obligatoire.';
         if ($donnees['amount'] <= 0) $erreurs[] = 'Le montant doit etre superieur a 0.';
         if (!in_array($donnees['currency'], ['USD','CDF'], true)) $erreurs[] = 'Devise invalide.';
         if ($donnees['currency'] === 'CDF' && $donnees['exchange_rate'] <= 0) $erreurs[] = 'Le taux est obligatoire pour CDF.';
-        if (!in_array($donnees['payment_method'], ['especes','banque','mobile_money'], true)) $erreurs[] = 'Mode de paiement invalide.';
-        if ($donnees['account_id'] <= 0) $erreurs[] = 'Le compte est obligatoire.';
+        $date = DateTimeImmutable::createFromFormat('!Y-m-d', (string)$donnees['date_receipt']);
+        if (!$date || $date->format('Y-m-d') !== $donnees['date_receipt']) $erreurs[] = 'La date est invalide.';
+        if (!empty($donnees['category_id'])) {
+            $categorie = $this->financeModel->trouverCategorieParId((int)$donnees['category_id']);
+            if (!$categorie || empty($categorie['actif']) || $categorie['type_flux'] !== 'revenu') $erreurs[] = 'Sélectionnez une catégorie de recette active.';
+        }
+        if ($avecPaiement) {
+            if (!in_array($donnees['payment_method'], ['especes','banque','mobile_money'], true)) $erreurs[] = 'Mode de paiement invalide.';
+            if ($donnees['account_id'] <= 0) $erreurs[] = 'Le compte est obligatoire.';
+        }
     }
 
     private function validerDonneesDemande(array $donnees, array &$erreurs): void {
@@ -2567,7 +2655,7 @@ class TreasuryController {
     private function peutControlerDemandes(): bool {
         if (($_SESSION['user_role'] ?? '') === 'auditeur_interne') return false;
         $service = $this->normaliserService((string)($_SESSION['user_service'] ?? ''));
-        return in_array($_SESSION['user_role'] ?? '', ['admin','tresorier'], true) || strpos($service, 'tresorerie') !== false;
+        return in_array($_SESSION['user_role'] ?? '', ['admin','admin_finance','tresorier'], true) || strpos($service, 'tresorerie') !== false;
     }
 
     /** Notifie l'étape suivante après soumission et retourne le message de confirmation. */
@@ -2588,7 +2676,7 @@ class TreasuryController {
         if (!$demande) return;
         $users = getDB()->query("SELECT id, role, service FROM users WHERE actif = 1")->fetchAll();
         foreach ($users as $user) {
-            if ($user['role'] === 'tresorier' || $user['role'] === 'admin' || strpos($this->normaliserService((string)$user['service']), 'tresorerie') !== false) {
+            if ($user['role'] === 'tresorier' || in_array($user['role'], ['admin','admin_finance'], true) || strpos($this->normaliserService((string)$user['service']), 'tresorerie') !== false) {
                 creerNotification((int)$user['id'], 'demande_controle', 'Demande ' . $demande['request_number'] . ' : contrôle trésorerie attendu.', APP_URL . '/treasury/demande-voir/' . $id);
             }
         }
@@ -2614,7 +2702,7 @@ class TreasuryController {
         $role = $_SESSION['user_role'] ?? '';
         if ($role === 'auditeur_interne') return false;
         return in_array($role, [
-                'admin','direction','chef_service','tresorier','comptable_senior',
+                'admin','admin_finance','direction','chef_service','tresorier','comptable_senior',
                 'directeur_financier','directeur_general'
             ], true)
             || strpos($this->normaliserService((string)($_SESSION['user_service'] ?? '')), 'tresorerie') !== false;
@@ -2624,12 +2712,68 @@ class TreasuryController {
         return $this->peutValiderNiveau('comptable') || $this->peutValiderNiveau('direction_financiere');
     }
 
+    /**
+     * Droits de l'utilisateur courant sur un encaissement, étape par étape.
+     * Constatation : trésorerie/comptabilité · Liquidation : comptable senior ·
+     * Ordonnancement : direction financière · Recouvrement : trésorier/caisse.
+     * Une même personne ne peut pas franchir deux étapes consécutives.
+     */
+    private function droitsEncaissement(array $r): array {
+        $uid = (int)($_SESSION['user_id'] ?? 0);
+        $status = (string)$r['status'];
+        $collecte = (float)($r['amount_collected'] ?? 0);
+        $operateur = $this->peutOpererTresorerie();
+        $comptable = $operateur && $this->peutValiderNiveau('comptable');
+        $ordonnateur = $operateur && $this->peutValiderNiveau('direction_financiere');
+        $caissier = $operateur && $this->peutExecuterPaiement();
+        $droits = ['liquider' => false, 'ordonnancer' => false, 'recouvrer' => false, 'renvoyer' => false, 'annuler' => false, 'separation' => ''];
+
+        if (in_array($status, ['constate', 'brouillon'], true) && $comptable) {
+            if ($uid === (int)$r['created_by']) $droits['separation'] = 'Vous avez constaté cette créance : sa liquidation revient à un autre comptable.';
+            else $droits['liquider'] = true;
+        }
+        if ($status === 'liquide' && $ordonnateur) {
+            $droits['renvoyer'] = true;
+            if ($uid === (int)$r['liquidated_by']) $droits['separation'] = 'Vous avez liquidé cette créance : son ordonnancement revient à un autre ordonnateur.';
+            else $droits['ordonnancer'] = true;
+        }
+        if (in_array($status, ['ordonnance', 'partiellement_recouvre'], true) && $caissier) {
+            if ($status === 'ordonnance' && $collecte <= 0) $droits['renvoyer'] = true;
+            if ($uid === (int)$r['ordered_by']) $droits['separation'] = 'Vous avez émis ce titre de recette : son recouvrement revient à la trésorerie.';
+            else $droits['recouvrer'] = true;
+        }
+        $droits['annuler'] = in_array($status, ['brouillon', 'constate', 'liquide', 'ordonnance'], true) && $collecte <= 0 && $this->peutAnnulerTresorerie();
+        return $droits;
+    }
+
+    /** Prochaine action d'un encaissement pour les registres. */
+    private function actionEncaissement(array $r): array {
+        switch ((string)$r['status']) {
+            case 'brouillon':
+            case 'constate': return ['label' => 'Liquidation requise', 'owner' => 'Comptable senior', 'button' => 'Liquider', 'icon' => 'bi-calculator', 'tone' => 'warning'];
+            case 'liquide': return ['label' => 'Ordonnancement requis', 'owner' => 'Direction financière', 'button' => 'Ordonnancer', 'icon' => 'bi-file-earmark-text', 'tone' => 'primary'];
+            case 'ordonnance': return ['label' => 'Recouvrement attendu', 'owner' => 'Trésorerie', 'button' => 'Recouvrer', 'icon' => 'bi-cash-coin', 'tone' => 'warning'];
+            case 'partiellement_recouvre': return ['label' => 'Recouvrement partiel', 'owner' => 'Reste ' . formatMontant((float)$r['remaining_amount'], $r['currency']), 'button' => 'Recouvrer', 'icon' => 'bi-hourglass-split', 'tone' => 'warning'];
+            case 'valide':
+            case 'recouvre': return ['label' => !empty($r['is_cash_sale']) ? 'Recouvré · comptant' : 'Recette recouvrée', 'owner' => 'Cycle terminé', 'button' => 'Consulter', 'icon' => 'bi-check2-circle', 'tone' => 'success'];
+            case 'annule': return ['label' => 'Encaissement annulé', 'owner' => 'Cycle clôturé', 'button' => 'Consulter', 'icon' => 'bi-slash-circle', 'tone' => 'secondary'];
+        }
+        return ['label' => 'Suivi requis', 'owner' => 'Trésorerie', 'button' => 'Consulter', 'icon' => 'bi-arrow-right-circle', 'tone' => 'secondary'];
+    }
+
+    private function libelleEtapeEncaissement(string $status): string {
+        return [
+            'brouillon' => 'Constaté', 'constate' => 'Constaté', 'liquide' => 'Liquidé', 'ordonnance' => 'Ordonnancé',
+            'partiellement_recouvre' => 'Partiellement recouvré', 'valide' => 'Recouvré', 'recouvre' => 'Recouvré', 'annule' => 'Annulé',
+        ][$status] ?? ucfirst(str_replace('_', ' ', $status));
+    }
+
     private function peutExecuterPaiement(): bool {
         $role = $_SESSION['user_role'] ?? '';
         if ($role === 'auditeur_interne') return false;
         $service = $this->normaliserService((string)($_SESSION['user_service'] ?? ''));
 
-        return in_array($role, ['admin','tresorier'], true)
+        return in_array($role, ['admin','admin_finance','tresorier'], true)
             || strpos($service, 'tresorerie') !== false
             || ($role === 'direction' && strpos($service, 'finance') !== false);
     }
@@ -2643,7 +2787,7 @@ class TreasuryController {
         if ($role === 'auditeur_interne') return false;
         $service = $this->normaliserService((string)($_SESSION['user_service'] ?? ''));
 
-        if ($role === 'admin') {
+        if (in_array($role, ['admin','admin_finance'], true)) {
             return true;
         }
         if ($niveau === 'comptable') {
@@ -2663,7 +2807,7 @@ class TreasuryController {
                 ));
         }
         if ($niveau === 'direction_generale') {
-            return in_array($role, ['directeur_general','admin'], true)
+            return in_array($role, ['directeur_general','admin','admin_finance'], true)
                 || ($role === 'direction' && strpos($service, 'generale') !== false)
                 || strpos($service, 'direction generale') !== false;
         }
@@ -2722,7 +2866,7 @@ class TreasuryController {
     }
 
     private function peutModifierJourneeCloturee(): bool {
-        return in_array($_SESSION['user_role'] ?? '', ['admin','directeur_general'], true);
+        return in_array($_SESSION['user_role'] ?? '', ['admin','admin_finance','directeur_general'], true);
     }
 
     private function respecteSeparationTachesDemande(array $demande): bool {
@@ -2811,7 +2955,7 @@ class TreasuryController {
             $match = false;
 
             if ($niveau === 'comptable') {
-                $match = $role === 'admin'
+                $match = in_array($role, ['admin','admin_finance'], true)
                     || $role === 'comptable_senior'
                     || ($role === 'chef_service' && (
                         strpos($service, 'finance') !== false
@@ -2819,7 +2963,7 @@ class TreasuryController {
                         || strpos($service, 'comptabilite') !== false
                     ));
             } elseif ($niveau === 'direction_financiere') {
-                $match = $role === 'admin'
+                $match = in_array($role, ['admin','admin_finance'], true)
                     || $role === 'directeur_financier'
                     || ($role === 'direction' && (
                         strpos($service, 'finance') !== false
@@ -2827,7 +2971,7 @@ class TreasuryController {
                         || strpos($service, 'direction des finances') !== false
                     ));
             } elseif ($niveau === 'direction_generale') {
-                $match = in_array($role, ['admin', 'directeur_general'], true)
+                $match = in_array($role, ['admin', 'admin_finance', 'directeur_general'], true)
                     || ($role === 'direction' && strpos($service, 'generale') !== false)
                     || strpos($service, 'direction generale') !== false;
             }

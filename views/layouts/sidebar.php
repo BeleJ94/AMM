@@ -13,7 +13,7 @@ $userServiceNormalise = strtr($userService, [
     'ô' => 'o',
     'ç' => 'c',
 ]);
-$accesFinanceModule = in_array($userRole, ['admin', 'direction', 'chef_service', 'comptable_senior', 'directeur_financier', 'directeur_general'], true) || strpos($userService, 'finance') !== false;
+$accesFinanceModule = in_array($userRole, ['admin', 'admin_finance', 'direction', 'chef_service', 'comptable_senior', 'directeur_financier', 'directeur_general'], true) || strpos($userService, 'finance') !== false;
 $accesTresorerieModule = accesGlobalDemandesFonds();
 $sidebarMode = $sidebarMode ?? 'desktop';
 $sidebarId = $sidebarMode === 'mobile' ? 'sidebar-mobile' : 'sidebar';
@@ -216,6 +216,17 @@ if (!function_exists('quickActionItem')) {
                     <?= menuItem(APP_URL . '/dashboard/direction', 'bi-bar-chart', 'Dashboard Direction', $urlCourante, 'dashboard/direction', null, true) ?>
                     <?= menuItem(APP_URL . '/dashboard/finance', 'bi-currency-dollar', 'Dashboard Finance', $urlCourante, 'dashboard/finance', null, true) ?>
                     <?= menuItem(APP_URL . '/dashboard/legal', 'bi-shield-check', 'Dashboard Juridique', $urlCourante, 'dashboard/legal', null, true) ?>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($userRole === 'admin_finance'): ?>
+        <div class="app-sidebar-group mb-2">
+            <?= menuSectionToggle($sidebarId . '-admin', 'bi-sliders', 'Administration Finance', $_openAdmin) ?>
+            <div id="<?= e($sidebarId) ?>-admin" class="collapse <?= $_openAdmin ? 'show' : '' ?>">
+                <div class="app-sidebar-section-body mt-2">
+                    <?= menuItem(APP_URL . '/admin-finance', 'bi-bank', 'Paramètres financiers', $urlCourante, 'admin-finance') ?>
                 </div>
             </div>
         </div>

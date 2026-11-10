@@ -105,7 +105,7 @@
             <?php
             $topbarRole = $_SESSION['user_role'] ?? '';
             $topbarService = strtolower((string)($_SESSION['user_service'] ?? ''));
-            $topbarFinance = in_array($topbarRole, ['admin','direction','chef_service','tresorier','comptable_senior','directeur_financier','directeur_general','auditeur_interne'], true)
+            $topbarFinance = in_array($topbarRole, ['admin','admin_finance','direction','chef_service','tresorier','comptable_senior','directeur_financier','directeur_general','auditeur_interne'], true)
                 || strpos($topbarService, 'finance') !== false
                 || strpos($topbarService, 'tresorerie') !== false;
             ?>

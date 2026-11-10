@@ -49,6 +49,7 @@
                                     <?php
                                     switch ($u['role']) {
                                         case 'admin':
+                                        case 'admin_finance':
                                             $badgeRole = 'danger';
                                             break;
                                         case 'direction':

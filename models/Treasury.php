@@ -64,8 +64,8 @@ class Treasury {
 
         $stmt = $this->pdo->prepare(
             "SELECT COALESCE(SUM(amount_usd), 0)
-             FROM treasury_receipts
-             WHERE status = 'valide' AND date_receipt = ?"
+             FROM treasury_receipt_collections
+             WHERE status = 'valide' AND collection_date = ?"
         );
         $stmt->execute([$today]);
         $stats['encaissements_jour_usd'] = (float)$stmt->fetchColumn();
@@ -80,10 +80,10 @@ class Treasury {
 
         $stmt = $this->pdo->prepare(
             "SELECT COALESCE(SUM(amount_usd), 0)
-             FROM treasury_receipts
+             FROM treasury_receipt_collections
              WHERE status = 'valide'
-               AND YEAR(date_receipt) = ?
-               AND MONTH(date_receipt) = ?"
+               AND YEAR(collection_date) = ?
+               AND MONTH(collection_date) = ?"
         );
         $stmt->execute([$annee, $mois]);
         $stats['encaissements_mois_usd'] = (float)$stmt->fetchColumn();
@@ -215,10 +215,11 @@ class Treasury {
     public function dernieresOperations(int $limite = 10): array {
         $limite = max(1, min(100, $limite));
         $stmt = $this->pdo->prepare(
-            "(SELECT 'encaissement' AS type_operation, receipt_number AS reference_operation,
-                    date_receipt AS date_operation, payer_name AS tiers, objet, amount, currency,
-                    amount_usd, status
-             FROM treasury_receipts)
+            "(SELECT 'encaissement' AS type_operation, c.collection_number AS reference_operation,
+                    c.collection_date AS date_operation, rc.payer_name AS tiers, rc.objet, c.amount, c.currency,
+                    c.amount_usd, c.status
+             FROM treasury_receipt_collections c
+             JOIN treasury_receipts rc ON rc.id = c.receipt_id)
              UNION ALL
              (SELECT 'decaissement' AS type_operation, po.order_number AS reference_operation,
                     p.payment_date AS date_operation, po.beneficiary AS tiers, r.objet,
@@ -275,8 +276,12 @@ class Treasury {
     }
 
     // ---------------------------------------------------------------
-    // ENCAISSEMENTS / RECUS
+    // ENCAISSEMENTS : constatation -> liquidation -> ordonnancement -> recouvrement
     // ---------------------------------------------------------------
+
+    /** Statuts encore à traiter dans le circuit, et statuts « à recouvrer ». */
+    public const ENCAISSEMENTS_EN_COURS = ['brouillon', 'constate', 'liquide', 'ordonnance', 'partiellement_recouvre'];
+    public const ENCAISSEMENTS_A_RECOUVRER = ['ordonnance', 'partiellement_recouvre'];
 
     public function compterEncaissements(array $filtres = []): int {
         $sql = "SELECT COUNT(*) FROM treasury_receipts r WHERE 1=1";
@@ -289,12 +294,18 @@ class Treasury {
     }
 
     public function listerEncaissements(array $filtres = [], int $limite = 20, int $offset = 0): array {
-        $sql = "SELECT r.*, a.nom AS account_nom, a.type_compte AS account_type,
-                       u.nom AS created_by_nom, uv.nom AS validated_by_nom
+        $sql = "SELECT r.*, a.nom AS account_nom, a.type_compte AS account_type, fc.nom AS category_nom,
+                       u.nom AS created_by_nom, uv.nom AS validated_by_nom,
+                       ul.nom AS liquidated_by_nom, uo.nom AS ordered_by_nom,
+                       GREATEST(r.amount - r.amount_collected, 0) AS remaining_amount,
+                       GREATEST(r.amount_usd - r.amount_collected_usd, 0) AS remaining_amount_usd
                 FROM treasury_receipts r
-                JOIN financial_accounts a ON a.id = r.account_id
+                LEFT JOIN financial_accounts a ON a.id = r.account_id
+                LEFT JOIN financial_categories fc ON fc.id = r.category_id
                 LEFT JOIN users u ON u.id = r.created_by
                 LEFT JOIN users uv ON uv.id = r.validated_by
+                LEFT JOIN users ul ON ul.id = r.liquidated_by
+                LEFT JOIN users uo ON uo.id = r.ordered_by
                 WHERE 1=1";
         $params = [];
         $this->appliquerFiltresEncaissements($sql, $params, $filtres);
@@ -309,13 +320,19 @@ class Treasury {
 
     public function trouverEncaissementParId(int $id) {
         $stmt = $this->pdo->prepare(
-            "SELECT r.*, a.nom AS account_nom, a.type_compte, u.nom AS created_by_nom,
-                    uv.nom AS validated_by_nom, uc.nom AS cancelled_by_nom
+            "SELECT r.*, a.nom AS account_nom, a.type_compte, fc.nom AS category_nom, u.nom AS created_by_nom,
+                    uv.nom AS validated_by_nom, uc.nom AS cancelled_by_nom,
+                    ul.nom AS liquidated_by_nom, uo.nom AS ordered_by_nom,
+                    GREATEST(r.amount - r.amount_collected, 0) AS remaining_amount,
+                    GREATEST(r.amount_usd - r.amount_collected_usd, 0) AS remaining_amount_usd
              FROM treasury_receipts r
-             JOIN financial_accounts a ON a.id = r.account_id
+             LEFT JOIN financial_accounts a ON a.id = r.account_id
+             LEFT JOIN financial_categories fc ON fc.id = r.category_id
              LEFT JOIN users u ON u.id = r.created_by
              LEFT JOIN users uv ON uv.id = r.validated_by
              LEFT JOIN users uc ON uc.id = r.cancelled_by
+             LEFT JOIN users ul ON ul.id = r.liquidated_by
+             LEFT JOIN users uo ON uo.id = r.ordered_by
              WHERE r.id = ?
              LIMIT 1"
         );
@@ -323,125 +340,377 @@ class Treasury {
         return $stmt->fetch();
     }
 
+    /** Versements (recouvrements partiels ou totaux) d'un encaissement. */
+    public function versementsEncaissement(int $receiptId): array {
+        $stmt = $this->pdo->prepare(
+            "SELECT c.*, a.nom AS account_nom, a.type_compte, u.nom AS created_by_nom, uc.nom AS cancelled_by_nom
+             FROM treasury_receipt_collections c
+             LEFT JOIN financial_accounts a ON a.id = c.account_id
+             LEFT JOIN users u ON u.id = c.created_by
+             LEFT JOIN users uc ON uc.id = c.cancelled_by
+             WHERE c.receipt_id = ?
+             ORDER BY c.collection_date ASC, c.id ASC"
+        );
+        $stmt->execute([$receiptId]);
+        return $stmt->fetchAll();
+    }
+
+    /** Journal des étapes franchies par un encaissement. */
+    public function etapesEncaissement(int $receiptId): array {
+        $stmt = $this->pdo->prepare(
+            "SELECT s.*, u.nom AS user_nom FROM treasury_receipt_steps s
+             LEFT JOIN users u ON u.id = s.user_id
+             WHERE s.receipt_id = ? ORDER BY s.created_at ASC, s.id ASC"
+        );
+        $stmt->execute([$receiptId]);
+        return $stmt->fetchAll();
+    }
+
+    /** Créances ordonnancées non encore (totalement) recouvrées, en USD. */
+    public function creancesARecouvrerUsd(): float {
+        return (float)$this->pdo->query(
+            "SELECT COALESCE(SUM(GREATEST(amount_usd - amount_collected_usd, 0)), 0)
+             FROM treasury_receipts WHERE status IN ('ordonnance','partiellement_recouvre')"
+        )->fetchColumn();
+    }
+
+    /**
+     * Étape 1 — Constatation : enregistre le droit à recevoir (créance), sans mouvement de fonds.
+     * Le compte et le mode de paiement ne sont connus qu'au recouvrement.
+     */
     public function creerEncaissement(array $donnees): int {
         return FinancialAccountGuard::transaction($this->pdo, function () use ($donnees) {
-            FinancialAccountGuard::verifier($this->pdo, (int)$donnees['account_id'], $donnees['currency'], $donnees['payment_method']);
+            $currency = (string)($donnees['currency'] ?? 'USD');
+            $accountId = !empty($donnees['account_id']) ? (int)$donnees['account_id'] : null;
+            $method = !empty($donnees['payment_method']) ? (string)$donnees['payment_method'] : null;
+            if ($accountId !== null) {
+                FinancialAccountGuard::verifier($this->pdo, $accountId, $currency, $method);
+            }
 
             $numero = $donnees['receipt_number'] ?? $this->genererNumeroRecu();
             $amountUsd = $this->convertirVersUsd(
                 (float)$donnees['amount'],
-                (string)$donnees['currency'],
-                isset($donnees['exchange_rate']) ? (float)$donnees['exchange_rate'] : null
+                $currency,
+                !empty($donnees['exchange_rate']) ? (float)$donnees['exchange_rate'] : null
             );
 
             $stmt = $this->pdo->prepare(
                 "INSERT INTO treasury_receipts
-                 (receipt_number, date_receipt, payer_name, objet, amount, currency, exchange_rate,
+                 (receipt_number, date_receipt, payer_name, objet, category_id, amount, estimated_amount, currency, exchange_rate,
                   amount_usd, payment_method, account_id, document_id, proof_file, reference_payment,
-                  notes, status, created_by, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'brouillon', ?, NOW())"
+                  notes, status, is_cash_sale, created_by, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'constate', ?, ?, NOW())"
             );
-
             $stmt->execute([
                 $numero,
                 $donnees['date_receipt'] ?? date('Y-m-d'),
                 $donnees['payer_name'],
                 $donnees['objet'],
+                !empty($donnees['category_id']) ? (int)$donnees['category_id'] : null,
                 $donnees['amount'],
-                $donnees['currency'] ?? 'USD',
+                $donnees['amount'],
+                $currency,
                 !empty($donnees['exchange_rate']) ? $donnees['exchange_rate'] : null,
                 $amountUsd,
-                $donnees['payment_method'],
-                (int)$donnees['account_id'],
+                $method,
+                $accountId,
                 !empty($donnees['document_id']) ? (int)$donnees['document_id'] : null,
                 $donnees['proof_file'] ?? null,
-                $donnees['reference_payment'] ?? null,
-                $donnees['notes'] ?? null,
+                ($donnees['reference_payment'] ?? '') !== '' ? $donnees['reference_payment'] : null,
+                ($donnees['notes'] ?? '') !== '' ? $donnees['notes'] : null,
+                !empty($donnees['is_cash_sale']) ? 1 : 0,
                 $donnees['created_by'] ?? null,
             ]);
-
-            return (int)$this->pdo->lastInsertId();
+            $id = (int)$this->pdo->lastInsertId();
+            $this->journaliserEtapeEncaissement($id, 'constatation', (int)($donnees['created_by'] ?? 0), (float)$donnees['amount'], 'Créance constatée.');
+            return $id;
         });
     }
 
-    public function validerEncaissement(int $id, int $userId): bool {
-        $encaissement = $this->trouverEncaissementParId($id);
-        if (!$encaissement || $encaissement['status'] !== 'brouillon') {
-            return false;
-        }
+    /** Étape 2 — Liquidation : arrête le montant définitivement dû. */
+    public function liquiderEncaissement(int $id, int $userId, float $montant, string $commentaire = '', bool $controlerSeparation = true): bool {
+        $commentaire = trim($commentaire);
+        return FinancialAccountGuard::transaction($this->pdo, function () use ($id, $userId, $montant, $commentaire, $controlerSeparation) {
+            $r = $this->verrouillerEncaissement($id);
+            if (!$r || !in_array($r['status'], ['constate', 'brouillon'], true)) {
+                throw new DomainException('Seule une créance constatée peut être liquidée.');
+            }
+            if ($controlerSeparation && $userId === (int)$r['created_by']) {
+                throw new DomainException('Séparation des tâches : la personne qui a constaté la créance ne peut pas la liquider.');
+            }
+            $montant = round($montant, 2);
+            if (!is_finite($montant) || $montant <= 0) {
+                throw new DomainException('Le montant liquidé doit être supérieur à 0.');
+            }
+            $estime = (float)($r['estimated_amount'] ?? $r['amount']);
+            if (abs($montant - $estime) > 0.005 && $commentaire === '') {
+                throw new DomainException('Le montant liquidé diffère du montant constaté : précisez le motif de l’écart.');
+            }
+            $usd = round($this->convertirVersUsd($montant, $r['currency'], $r['exchange_rate'] !== null ? (float)$r['exchange_rate'] : null), 2);
+            $stmt = $this->pdo->prepare(
+                "UPDATE treasury_receipts SET status='liquide', amount=?, amount_usd=?, liquidated_by=?, liquidated_at=NOW(), liquidation_comment=? WHERE id=?"
+            );
+            $stmt->execute([$montant, $usd, $userId, $commentaire !== '' ? $commentaire : null, $id]);
+            $this->journaliserEtapeEncaissement($id, 'liquidation', $userId, $montant, $commentaire !== '' ? $commentaire : 'Montant arrêté.');
+            return true;
+        });
+    }
 
-        $owner = !$this->pdo->inTransaction();
-        try {
-            if ($owner) $this->pdo->beginTransaction();
-            FinancialAccountGuard::verifier($this->pdo, (int)$encaissement['account_id'], $encaissement['currency'], $encaissement['payment_method']);
+    /** Étape 3 — Ordonnancement : émet le titre de recette numéroté. */
+    public function ordonnancerEncaissement(int $id, int $userId, ?string $dueDate = null, string $commentaire = '', bool $controlerSeparation = true): bool {
+        $commentaire = trim($commentaire);
+        return FinancialAccountGuard::transaction($this->pdo, function () use ($id, $userId, $dueDate, $commentaire, $controlerSeparation) {
+            $r = $this->verrouillerEncaissement($id);
+            if (!$r || $r['status'] !== 'liquide') {
+                throw new DomainException('Seule une créance liquidée peut être ordonnancée.');
+            }
+            if ($controlerSeparation && $userId === (int)$r['liquidated_by']) {
+                throw new DomainException('Séparation des tâches : la personne qui a liquidé la créance ne peut pas l’ordonnancer.');
+            }
+            $dueDate = ($dueDate !== null && $dueDate !== '') ? $dueDate : null;
+            if ($dueDate !== null) {
+                $d = DateTimeImmutable::createFromFormat('!Y-m-d', $dueDate);
+                if (!$d || $d->format('Y-m-d') !== $dueDate) { throw new DomainException('La date d’échéance est invalide.'); }
+            }
+            $titre = $r['title_number'] ?: $this->genererNumeroSequence('TR', 'treasury_receipts', 'ordered_at');
+            $stmt = $this->pdo->prepare(
+                "UPDATE treasury_receipts SET status='ordonnance', title_number=?, ordered_by=?, ordered_at=NOW(), due_date=? WHERE id=?"
+            );
+            $stmt->execute([$titre, $userId, $dueDate, $id]);
+            $this->journaliserEtapeEncaissement($id, 'ordonnancement', $userId, (float)$r['amount'], $commentaire !== '' ? $commentaire : 'Titre de recette ' . $titre . ' émis.');
+            return true;
+        });
+    }
+
+    /**
+     * Étape 4 — Recouvrement : enregistre un versement (partiel ou total), crée l'écriture
+     * financière sur le compte crédité et met à jour le reste à recouvrer.
+     */
+    public function recouvrerEncaissement(int $id, int $userId, array $v, bool $controlerSeparation = true): int {
+        return FinancialAccountGuard::transaction($this->pdo, function () use ($id, $userId, $v, $controlerSeparation) {
+            $r = $this->verrouillerEncaissement($id);
+            if (!$r || !in_array($r['status'], self::ENCAISSEMENTS_A_RECOUVRER, true)) {
+                throw new DomainException('Seul un titre de recette ordonnancé peut être recouvré.');
+            }
+            if ($controlerSeparation && $userId === (int)$r['ordered_by']) {
+                throw new DomainException('Séparation des tâches : l’ordonnateur ne peut pas enregistrer le recouvrement.');
+            }
+            $montant = round((float)($v['amount'] ?? 0), 2);
+            $reste = round((float)$r['amount'] - (float)$r['amount_collected'], 2);
+            if (!is_finite($montant) || $montant <= 0) { throw new DomainException('Le montant recouvré doit être supérieur à 0.'); }
+            if ($montant > $reste + 0.005) {
+                throw new DomainException('Le montant recouvré dépasse le reste à recouvrer (' . number_format($reste, 2, ',', ' ') . ' ' . $r['currency'] . ').');
+            }
+            $method = (string)($v['payment_method'] ?? '');
+            if (!in_array($method, ['especes', 'banque', 'mobile_money'], true)) { throw new DomainException('Mode de paiement invalide.'); }
+            $accountId = (int)($v['account_id'] ?? 0);
+            if ($accountId <= 0) { throw new DomainException('Le compte crédité est obligatoire.'); }
+            FinancialAccountGuard::verifier($this->pdo, $accountId, $r['currency'], $method);
+            $date = (string)($v['collection_date'] ?? date('Y-m-d'));
+            $d = DateTimeImmutable::createFromFormat('!Y-m-d', $date);
+            if (!$d || $d->format('Y-m-d') !== $date) { throw new DomainException('La date de recouvrement est invalide.'); }
+
+            $taux = $r['exchange_rate'] !== null ? (float)$r['exchange_rate'] : null;
+            $usd = round($this->convertirVersUsd($montant, $r['currency'], $taux), 2);
+            $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM treasury_receipt_collections WHERE receipt_id=?');
+            $stmt->execute([$id]);
+            $numero = $r['receipt_number'] . '/' . sprintf('%02d', (int)$stmt->fetchColumn() + 1);
+            $reference = trim((string)($v['reference_payment'] ?? ''));
+            $preuve = $v['proof_file'] ?? null;
 
             $transactionId = $this->creerTransactionFinanciere([
-                'date_operation' => $encaissement['date_receipt'],
+                'date_operation' => $date,
                 'type_flux' => 'revenu',
-                'categorie_id' => $this->categorieParDefaut('revenu'),
-                'compte_id' => (int)$encaissement['account_id'],
-                'montant' => (float)$encaissement['amount'],
-                'devise' => $encaissement['currency'],
-                'taux_change' => $encaissement['exchange_rate'],
-                'montant_usd' => (float)$encaissement['amount_usd'],
+                'categorie_id' => !empty($r['category_id']) ? (int)$r['category_id'] : $this->categorieParDefaut('revenu'),
+                'compte_id' => $accountId,
+                'montant' => $montant,
+                'devise' => $r['currency'],
+                'taux_change' => $taux,
+                'montant_usd' => $usd,
                 'statut' => 'valide',
-                'partenaire' => $encaissement['payer_name'],
-                'description' => 'Encaissement ' . $encaissement['receipt_number'] . ' - ' . $encaissement['objet'],
-                'piece_jointe' => $encaissement['proof_file'],
-                'created_by' => $encaissement['created_by'],
+                'partenaire' => $r['payer_name'],
+                'description' => 'Recouvrement ' . $numero . ' - ' . $r['objet'],
+                'piece_jointe' => $preuve,
+                'created_by' => $userId,
                 'approved_by' => $userId,
             ]);
 
             $stmt = $this->pdo->prepare(
-                "UPDATE treasury_receipts
-                 SET status = 'valide', validated_by = ?, validated_at = NOW(),
-                     financial_transaction_id = ?
-                 WHERE id = ? AND status = 'brouillon'"
+                "INSERT INTO treasury_receipt_collections
+                 (receipt_id, collection_number, collection_date, amount, currency, exchange_rate, amount_usd, payment_method,
+                  account_id, reference_payment, proof_file, financial_transaction_id, status, created_by, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'valide', ?, NOW())"
             );
-            $stmt->execute([$userId, $transactionId, $id]);
+            $stmt->execute([$id, $numero, $date, $montant, $r['currency'], $taux, $usd, $method, $accountId,
+                $reference !== '' ? $reference : null, $preuve, $transactionId, $userId]);
+            $collectionId = (int)$this->pdo->lastInsertId();
 
-            if ($encaissement['payment_method'] === 'especes') {
-                $this->recalculerSessionCaisse((int)$encaissement['account_id'], (string)$encaissement['date_receipt']);
+            // Le dernier compte et le dernier mode utilisés restent affichés sur la fiche et le reçu.
+            $stmt = $this->pdo->prepare('UPDATE treasury_receipts SET account_id=?, payment_method=?, reference_payment=COALESCE(?, reference_payment) WHERE id=?');
+            $stmt->execute([$accountId, $method, $reference !== '' ? $reference : null, $id]);
+            $this->recalculerRecouvrement($id, $userId);
+            $this->journaliserEtapeEncaissement($id, 'recouvrement', $userId, $montant, 'Versement ' . $numero . ($reference !== '' ? ' · réf. ' . $reference : '') . '.');
+
+            if ($method === 'especes') {
+                $this->recalculerSessionCaisse($accountId, $date);
             }
+            return $collectionId;
+        });
+    }
 
-            if ($owner) $this->pdo->commit();
+    /**
+     * Encaissement comptant (guichet) : les 4 étapes sont enregistrées en une seule opération
+     * par la même personne. L'encaissement est marqué « comptant » pour un contrôle a posteriori.
+     */
+    public function encaisserComptant(array $donnees, int $userId): int {
+        return FinancialAccountGuard::transaction($this->pdo, function () use ($donnees, $userId) {
+            $donnees['is_cash_sale'] = 1;
+            $donnees['created_by'] = $userId;
+            $id = $this->creerEncaissement($donnees);
+            $this->liquiderEncaissement($id, $userId, (float)$donnees['amount'], '', false);
+            $this->ordonnancerEncaissement($id, $userId, null, '', false);
+            $this->recouvrerEncaissement($id, $userId, [
+                'amount' => (float)$donnees['amount'],
+                'payment_method' => $donnees['payment_method'] ?? '',
+                'account_id' => (int)($donnees['account_id'] ?? 0),
+                'collection_date' => $donnees['date_receipt'] ?? date('Y-m-d'),
+                'reference_payment' => $donnees['reference_payment'] ?? '',
+                'proof_file' => $donnees['proof_file'] ?? null,
+            ], false);
+            $this->journaliserEtapeEncaissement($id, 'comptant', $userId, (float)$donnees['amount'], 'Encaissement comptant : circuit complet enregistré au guichet, à contrôler a posteriori.');
+            return $id;
+        });
+    }
+
+    /**
+     * Compatibilité : finalise en une fois une créance constatée qui porte déjà son compte et son mode
+     * (ancien bouton « Valider », scripts de contrôle). Elle est traitée comme un encaissement comptant.
+     */
+    public function validerEncaissement(int $id, int $userId): bool {
+        $r = $this->trouverEncaissementParId($id);
+        if (!$r || !in_array($r['status'], ['brouillon', 'constate'], true) || empty($r['account_id']) || empty($r['payment_method'])) {
+            return false;
+        }
+        try {
+            FinancialAccountGuard::transaction($this->pdo, function () use ($r, $id, $userId) {
+                $this->pdo->prepare('UPDATE treasury_receipts SET is_cash_sale=1 WHERE id=?')->execute([$id]);
+                $this->liquiderEncaissement($id, $userId, (float)$r['amount'], '', false);
+                $this->ordonnancerEncaissement($id, $userId, null, '', false);
+                $this->recouvrerEncaissement($id, $userId, [
+                    'amount' => (float)$r['amount'], 'payment_method' => $r['payment_method'], 'account_id' => (int)$r['account_id'],
+                    'collection_date' => $r['date_receipt'], 'reference_payment' => (string)($r['reference_payment'] ?? ''), 'proof_file' => $r['proof_file'],
+                ], false);
+            });
             return true;
+        } catch (DomainException $e) {
+            throw $e;
         } catch (Throwable $e) {
-            if ($owner && $this->pdo->inTransaction()) {
-                $this->pdo->rollBack();
-            }
-            if ($e instanceof DomainException) throw $e;
             error_log('Erreur validerEncaissement: ' . $e->getMessage());
             return false;
         }
+    }
+
+    /** Renvoi à l'étape précédente : liquidée -> constatée, ordonnancée (sans versement) -> liquidée. */
+    public function renvoyerEncaissement(int $id, int $userId, string $motif): bool {
+        $motif = trim($motif);
+        if ($motif === '') { throw new DomainException('Le motif du renvoi est obligatoire.'); }
+        return FinancialAccountGuard::transaction($this->pdo, function () use ($id, $userId, $motif) {
+            $r = $this->verrouillerEncaissement($id);
+            if (!$r) { throw new DomainException('Encaissement introuvable.'); }
+            if ($r['status'] === 'liquide') {
+                $sql = "UPDATE treasury_receipts SET status='constate', liquidated_by=NULL, liquidated_at=NULL WHERE id=?";
+                $libelle = 'Renvoyé à la constatation : ';
+            } elseif ($r['status'] === 'ordonnance' && (float)$r['amount_collected'] <= 0) {
+                $sql = "UPDATE treasury_receipts SET status='liquide', ordered_by=NULL, ordered_at=NULL, due_date=NULL WHERE id=?";
+                $libelle = 'Renvoyé à la liquidation : ';
+            } else {
+                throw new DomainException('Ce dossier ne peut plus être renvoyé à l’étape précédente.');
+            }
+            $this->pdo->prepare($sql)->execute([$id]);
+            $this->journaliserEtapeEncaissement($id, 'renvoi', $userId, null, $libelle . $motif);
+            return true;
+        });
     }
 
     public function genererNumeroRecu(): string {
         return $this->genererNumeroSequence('REC', 'treasury_receipts', 'created_at');
     }
 
+    /** Annulation possible tant qu'aucun versement n'a été recouvré (sinon : annuler l'écriture du versement). */
     public function annulerEncaissement(int $id, int $userId, string $motif): bool {
         $motif = trim($motif);
         if ($motif === '') {
             return false;
         }
-
-        $encaissement = $this->trouverEncaissementParId($id);
-        if (!$encaissement || $encaissement['status'] === 'annule') {
+        try {
+            return FinancialAccountGuard::transaction($this->pdo, function () use ($id, $userId, $motif) {
+                $r = $this->verrouillerEncaissement($id);
+                if (!$r || !in_array($r['status'], ['brouillon', 'constate', 'liquide', 'ordonnance'], true) || (float)$r['amount_collected'] > 0) {
+                    return false;
+                }
+                $stmt = $this->pdo->prepare(
+                    "UPDATE treasury_receipts
+                     SET status = 'annule', cancellation_reason = ?, cancelled_by = ?, cancelled_at = NOW()
+                     WHERE id = ?"
+                );
+                $stmt->execute([$motif, $userId, $id]);
+                $this->journaliserEtapeEncaissement($id, 'annulation', $userId, null, $motif);
+                return true;
+            });
+        } catch (Throwable $e) {
+            error_log('Erreur annulerEncaissement: ' . $e->getMessage());
             return false;
         }
+    }
 
-        if ($encaissement['status'] === 'valide' && !empty($encaissement['financial_transaction_id'])) {
-            return false;
-        }
-
+    /**
+     * Recalcule le montant recouvré et le statut d'après les versements valides
+     * (appelé après un versement ou l'annulation de son écriture financière).
+     */
+    public function recalculerRecouvrement(int $id, int $userId = 0, string $motifAnnulation = ''): void {
         $stmt = $this->pdo->prepare(
-            "UPDATE treasury_receipts
-             SET status = 'annule', cancellation_reason = ?, cancelled_by = ?, cancelled_at = NOW()
-             WHERE id = ? AND status = 'brouillon'"
+            "SELECT COALESCE(SUM(amount),0) AS total, COALESCE(SUM(amount_usd),0) AS total_usd
+             FROM treasury_receipt_collections WHERE receipt_id=? AND status='valide'"
         );
-        $stmt->execute([$motif, $userId, $id]);
-        return $stmt->rowCount() > 0;
+        $stmt->execute([$id]);
+        $somme = $stmt->fetch();
+        $r = $this->verrouillerEncaissement($id);
+        if (!$r) { return; }
+        $collecte = round((float)$somme['total'], 2);
+        if ($collecte >= (float)$r['amount'] - 0.005) {
+            $statut = 'recouvre';
+        } elseif ($collecte > 0) {
+            $statut = 'partiellement_recouvre';
+        } elseif (!empty($r['is_cash_sale']) && $motifAnnulation !== '') {
+            // Un encaissement comptant dont l'unique écriture est annulée est clôturé, comme auparavant.
+            $statut = 'annule';
+        } else {
+            $statut = 'ordonnance';
+        }
+        $complet = $statut === 'recouvre';
+        $stmt = $this->pdo->prepare(
+            "UPDATE treasury_receipts SET amount_collected=?, amount_collected_usd=?, status=?,
+                 recovered_at = IF(?, COALESCE(recovered_at, NOW()), NULL),
+                 validated_by = IF(?, COALESCE(validated_by, ?), validated_by),
+                 validated_at = IF(?, COALESCE(validated_at, NOW()), validated_at),
+                 cancelled_by = IF(? = 'annule', ?, cancelled_by), cancelled_at = IF(? = 'annule', NOW(), cancelled_at),
+                 cancellation_reason = IF(? = 'annule', ?, cancellation_reason)
+             WHERE id=?"
+        );
+        $stmt->execute([$collecte, round((float)$somme['total_usd'], 2), $statut,
+            $complet ? 1 : 0, $complet ? 1 : 0, $userId > 0 ? $userId : null, $complet ? 1 : 0,
+            $statut, $userId > 0 ? $userId : null, $statut, $statut, $motifAnnulation, $id]);
+    }
+
+    private function verrouillerEncaissement(int $id) {
+        $stmt = $this->pdo->prepare('SELECT * FROM treasury_receipts WHERE id=? FOR UPDATE');
+        $stmt->execute([$id]);
+        return $stmt->fetch();
+    }
+
+    private function journaliserEtapeEncaissement(int $receiptId, string $step, int $userId, ?float $amount, string $comment): void {
+        $stmt = $this->pdo->prepare('INSERT INTO treasury_receipt_steps (receipt_id, step, amount, comment, user_id, created_at) VALUES (?, ?, ?, ?, ?, NOW())');
+        $stmt->execute([$receiptId, $step, $amount, $comment !== '' ? $comment : null, $userId > 0 ? $userId : null]);
     }
 
     // ---------------------------------------------------------------
@@ -637,7 +906,7 @@ class Treasury {
     public function peutConsulterDemande(array $demande, int $userId, string $role, string $service): bool {
         if ($userId <= 0) { return false; }
         if ($userId === (int)($demande['created_by'] ?? 0)) { return true; }
-        if (in_array($role, ['admin','tresorier','comptable_senior','directeur_financier','directeur_general','auditeur_interne'], true)) { return true; }
+        if (in_array($role, ['admin','admin_finance','tresorier','comptable_senior','directeur_financier','directeur_general','auditeur_interne'], true)) { return true; }
         $serviceNormalise = $this->normaliserServiceDemande($service);
         if (($role === 'direction' || $role === 'chef_service')
             && preg_match('/finance|comptable|comptabilite|tresorerie|direction generale/', $serviceNormalise)) { return true; }
@@ -1327,11 +1596,11 @@ class Treasury {
 
         $stmt = $this->pdo->prepare(
             "SELECT COALESCE(SUM(amount), 0)
-             FROM treasury_receipts
+             FROM treasury_receipt_collections
              WHERE status = 'valide'
                AND payment_method = 'especes'
                AND account_id = ?
-               AND date_receipt = ?"
+               AND collection_date = ?"
         );
         $stmt->execute([$cashAccountId, $date]);
         $cashIn = (float)$stmt->fetchColumn();
@@ -1366,15 +1635,16 @@ class Treasury {
     }
 
     public function mouvementsCaissePeriode(int $cashAccountId, string $dateDebut, string $dateFin): array {
-        $sql = "(SELECT r.id, 'entree' AS sens, 'encaissement' AS type_operation,
-                        r.receipt_number AS reference_operation, r.date_receipt AS operation_date,
-                        r.payer_name AS partenaire, r.objet AS libelle, r.amount, r.currency,
-                        r.amount_usd, r.created_at
-                 FROM treasury_receipts r
-                 WHERE r.status = 'valide'
-                   AND r.payment_method = 'especes'
-                   AND r.account_id = ?
-                   AND r.date_receipt BETWEEN ? AND ?)
+        $sql = "(SELECT c.id, 'entree' AS sens, 'encaissement' AS type_operation,
+                        c.collection_number AS reference_operation, c.collection_date AS operation_date,
+                        r.payer_name AS partenaire, r.objet AS libelle, c.amount, c.currency,
+                        c.amount_usd, c.created_at
+                 FROM treasury_receipt_collections c
+                 JOIN treasury_receipts r ON r.id = c.receipt_id
+                 WHERE c.status = 'valide'
+                   AND c.payment_method = 'especes'
+                   AND c.account_id = ?
+                   AND c.collection_date BETWEEN ? AND ?)
                 UNION ALL
                 (SELECT p.id, 'sortie' AS sens, 'paiement' AS type_operation,
                         o.order_number AS reference_operation, p.payment_date AS operation_date,
@@ -1739,7 +2009,15 @@ class Treasury {
     // ---------------------------------------------------------------
 
     private function appliquerFiltresEncaissements(string &$sql, array &$params, array $filtres): void {
-        if (!empty($filtres['status'])) {
+        if (($filtres['status'] ?? '') === 'a_recouvrer') {
+            $sql .= " AND r.status IN ('ordonnance','partiellement_recouvre')";
+        } elseif (($filtres['status'] ?? '') === 'en_cours') {
+            $sql .= " AND r.status IN ('brouillon','constate','liquide','ordonnance','partiellement_recouvre')";
+        } elseif (($filtres['status'] ?? '') === 'constate') {
+            $sql .= " AND r.status IN ('constate','brouillon')";
+        } elseif (($filtres['status'] ?? '') === 'recouvre') {
+            $sql .= " AND r.status IN ('recouvre','valide')";
+        } elseif (!empty($filtres['status'])) {
             $sql .= " AND r.status = ?";
             $params[] = $filtres['status'];
         }
@@ -1806,16 +2084,18 @@ class Treasury {
 
         return [
             'titre' => 'Liste des encaissements',
-            'colonnes' => ['Date', 'Recu', 'Payeur', 'Objet', 'Mode', 'Compte', 'Montant', 'Devise', 'Montant USD', 'Statut'],
+            'colonnes' => ['Date', 'Recu', 'Titre de recette', 'Payeur', 'Objet', 'Mode', 'Compte', 'Montant', 'Recouvré', 'Devise', 'Montant USD', 'Statut'],
             'lignes' => array_map(static function ($row) {
                 return [
                     $row['date_receipt'],
                     $row['receipt_number'],
+                    $row['title_number'] ?? '',
                     $row['payer_name'],
                     $row['objet'],
-                    $row['payment_method'],
-                    $row['account_nom'],
+                    $row['payment_method'] ?? '',
+                    $row['account_nom'] ?? '',
                     $row['amount'],
+                    $row['amount_collected'],
                     $row['currency'],
                     $row['amount_usd'],
                     $row['status'],
@@ -2109,7 +2389,7 @@ class Treasury {
     private function utilisateurValideNiveauDemande(array $user, string $niveau): bool {
         $role = (string)$user['role'];
         $service = $this->normaliserServiceDemande((string)$user['service']);
-        if ($role === 'admin') { return true; }
+        if (in_array($role, ['admin','admin_finance'], true)) { return true; }
         if ($niveau === 'comptable') {
             return $role === 'comptable_senior' || ($role === 'chef_service' && (bool)preg_match('/finance|comptable|comptabilite/', $service));
         }

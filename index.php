@@ -164,7 +164,7 @@ switch ($controleur) {
 
     case 'admin-finance':
         verifierSession();
-        verifierRole(['admin']);
+        verifierRole(['admin', 'admin_finance']);
         $ctrl = new FinancialSettingsController();
         switch ($action) {
             case 'compte-enregistrer':   $ctrl->enregistrerCompte(); break;

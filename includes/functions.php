@@ -52,6 +52,7 @@ function rolesApplication(): array {
         'directeur_general' => 'Directeur général',
         'auditeur_interne' => 'Auditeur interne',
         'admin' => 'Administrateur',
+        'admin_finance' => 'Administrateur Finance',
     ];
 }
 
@@ -61,7 +62,7 @@ function libelleRole(string $role): string {
 
 /** Accès au portefeuille complet des demandes ; les autres profils restent dans leur périmètre. */
 function accesGlobalDemandesFonds(): bool {
-    if (in_array($_SESSION['user_role'] ?? '', ['admin','direction','tresorier','comptable_senior','directeur_financier','directeur_general','auditeur_interne'], true)) {
+    if (in_array($_SESSION['user_role'] ?? '', ['admin','admin_finance','direction','tresorier','comptable_senior','directeur_financier','directeur_general','auditeur_interne'], true)) {
         return true;
     }
     $service = strtolower((string)($_SESSION['user_service'] ?? ''));

@@ -42,6 +42,7 @@ class DashboardController {
             case 'auditeur_interne': redirect('/treasury/dashboard'); break;
             case 'chef_service': $this->direction(); break;
             case 'admin':     redirect('/treasury/dashboard'); break;
+            case 'admin_finance': redirect('/treasury/dashboard'); break;
             default:          $this->reception(); break;
         }
     }

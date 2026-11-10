@@ -34,7 +34,7 @@ class FinancialAccountGuard {
         $old = $stmt->fetchColumn();
         if ($old === false) throw new DomainException('Compte introuvable.');
         if ($old === $currency) return;
-        foreach (['financial_transactions'=>'compte_id', 'treasury_receipts'=>'account_id', 'treasury_payment_orders'=>'account_id', 'treasury_cash_sessions'=>'cash_account_id', 'treasury_bank_statements'=>'account_id'] as $table=>$column) {
+        foreach (['financial_transactions'=>'compte_id', 'treasury_receipts'=>'account_id', 'treasury_receipt_collections'=>'account_id', 'treasury_payment_orders'=>'account_id', 'treasury_cash_sessions'=>'cash_account_id', 'treasury_bank_statements'=>'account_id'] as $table=>$column) {
             $stmt = $pdo->prepare("SELECT id FROM $table WHERE $column=? LIMIT 1 FOR UPDATE");
             $stmt->execute([$id]);
             if ($stmt->fetchColumn()) throw new DomainException('Ce compte possède un historique. Sa devise ne peut plus être modifiée. Créez un autre compte pour la nouvelle devise.');

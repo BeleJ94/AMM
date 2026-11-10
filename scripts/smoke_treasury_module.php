@@ -87,8 +87,10 @@ try {
     // 2. Validation encaissement + 3. creation transaction revenu
     smokeAssert($treasury->validerEncaissement($receiptId, $userId), 'Validation encaissement echouee.');
     $receipt = $treasury->trouverEncaissementParId($receiptId);
-    smokeAssert(($receipt['status'] ?? '') === 'valide', 'Encaissement non valide apres validation.');
-    smokeAssert((int)($receipt['financial_transaction_id'] ?? 0) > 0, 'Transaction revenu non creee.');
+    // Circuit en 4 étapes : la validation directe recouvre la créance ; l'écriture est portée par le versement.
+    smokeAssert(($receipt['status'] ?? '') === 'recouvre', 'Encaissement non recouvre apres validation.');
+    $receipt['financial_transaction_id'] = (int)($treasury->versementsEncaissement($receiptId)[0]['financial_transaction_id'] ?? 0);
+    smokeAssert((int)$receipt['financial_transaction_id'] > 0, 'Transaction revenu non creee.');
     $ids['transactions'][] = (int)$receipt['financial_transaction_id'];
 
     // Alimenter aussi le compte bancaire utilisé pour le décaissement : aucun découvert implicite.
@@ -102,8 +104,7 @@ try {
     ]);
     $ids['receipts'][] = $bankReceiptId;
     smokeAssert($treasury->validerEncaissement($bankReceiptId, $userId), 'Alimentation du compte bancaire échouée.');
-    $bankReceipt = $treasury->trouverEncaissementParId($bankReceiptId);
-    $ids['transactions'][] = (int)$bankReceipt['financial_transaction_id'];
+    $ids['transactions'][] = (int)($treasury->versementsEncaissement($bankReceiptId)[0]['financial_transaction_id'] ?? 0);
 
     // 4. Creation demande de fonds
     $requestId = $treasury->creerDemandeFonds([
@@ -234,6 +235,8 @@ try {
         smokeDeleteIn($pdo, 'treasury_payment_orders', 'id', $ids['orders']);
         smokeDeleteIn($pdo, 'treasury_request_approvals', 'request_id', $ids['requests']);
         smokeDeleteIn($pdo, 'treasury_fund_requests', 'id', $ids['requests']);
+        smokeDeleteIn($pdo, 'treasury_receipt_steps', 'receipt_id', $ids['receipts']);
+        smokeDeleteIn($pdo, 'treasury_receipt_collections', 'receipt_id', $ids['receipts']);
         smokeDeleteIn($pdo, 'treasury_receipts', 'id', $ids['receipts']);
         smokeDeleteIn($pdo, 'financial_transactions', 'id', $ids['transactions']);
         smokeDeleteIn($pdo, 'financial_accounts', 'id', $ids['accounts']);

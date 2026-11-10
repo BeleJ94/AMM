@@ -50,37 +50,46 @@
 </head>
 <body>
 <?php
-$methodLabelPdf = ['especes'=>'Espèces','banque'=>'Banque','mobile_money'=>'Mobile money'][$encaissement['payment_method']] ?? ucfirst((string)$encaissement['payment_method']);
-$statusLabelPdf = ['valide'=>'Validé','brouillon'=>'Brouillon','annule'=>'Annulé'][$encaissement['status']] ?? ucfirst((string)$encaissement['status']);
+$typeDocument = $typeDocument ?? 'recu';
+$versements = $versements ?? [];
+$methodLabelPdf = ['especes'=>'Espèces','banque'=>'Banque','mobile_money'=>'Mobile money'][(string)$encaissement['payment_method']] ?? 'Déterminé au recouvrement';
+$statusLabelPdf = ['brouillon'=>'Constaté','constate'=>'Constaté','liquide'=>'Liquidé','ordonnance'=>'Ordonnancé','partiellement_recouvre'=>'Partiellement recouvré','recouvre'=>'Recouvré','valide'=>'Recouvré','annule'=>'Annulé'][$encaissement['status']] ?? ucfirst((string)$encaissement['status']);
+$statusClassPdf = in_array($encaissement['status'], ['recouvre','valide'], true) ? 'valide' : ($encaissement['status'] === 'annule' ? 'annule' : 'brouillon');
+$docTitle = ['recu'=>'Reçu d’encaissement','titre'=>'Titre de recette','creance'=>'Fiche de créance'][$typeDocument];
+$docNumber = $typeDocument === 'titre' ? $encaissement['title_number'] : $encaissement['receipt_number'];
+// Le titre de recette est un document valable une fois émis ; le reçu, une fois recouvré.
+// Un reçu atteste des versements réellement encaissés : il reste valable même si la créance n'est pas soldée.
+$sansFiligrane = $encaissement['status'] !== 'annule' && in_array($typeDocument, ['titre', 'recu'], true);
+$restePdf = max(0, (float)$encaissement['amount'] - (float)$encaissement['amount_collected']);
 ?>
 <div class="document">
     <div class="top-stripe"></div><div class="top-stripe-dark"></div><div class="top-stripe-green"></div>
-    <?php if ($encaissement['status'] !== 'valide'): ?><div class="watermark"><?= e(strtoupper($statusLabelPdf)) ?></div><?php endif; ?>
+    <?php if (!$sansFiligrane): ?><div class="watermark"><?= e(mb_strtoupper($statusLabelPdf)) ?></div><?php endif; ?>
     <table class="header-table"><tr>
         <td class="brand"><?php if($logoDataUri): ?><img class="logo" src="<?= $logoDataUri ?>" width="288" height="50" alt="AMM"><?php endif; ?><div class="company-meta">Vente et fourniture d’énergie électrique<br>Lubumbashi, République Démocratique du Congo</div></td>
-        <td class="document-meta" style="width:190px"><div class="document-type">Reçu d’encaissement</div><div class="document-number"><?= e($encaissement['receipt_number']) ?></div><span class="status status-<?= e($encaissement['status']) ?>"><?= e($statusLabelPdf) ?></span></td>
+        <td class="document-meta" style="width:190px"><div class="document-type"><?= e($docTitle) ?></div><div class="document-number"><?= e($docNumber) ?></div><span class="status status-<?= e($statusClassPdf) ?>"><?= e($statusLabelPdf) ?></span></td>
     </tr></table>
     <div class="rule"></div>
 
-    <div class="section-title">Informations de l’encaissement</div>
-    <table class="info-table"><tr><td style="width:48%"><div class="label">Reçu de</div><div class="value"><?= e($encaissement['payer_name']) ?></div></td><td style="width:25%"><div class="label">Date de réception</div><div class="value"><?= formatDate($encaissement['date_receipt']) ?></div></td><td><div class="label">Mode de paiement</div><div class="value"><?= e($methodLabelPdf) ?></div></td></tr></table>
+    <div class="section-title"><?= $typeDocument === 'recu' ? 'Informations de l’encaissement' : 'Informations de la créance' ?></div>
+    <table class="info-table"><tr><td style="width:48%"><div class="label"><?= $typeDocument === 'recu' ? 'Reçu de' : 'Débiteur' ?></div><div class="value"><?= e($encaissement['payer_name']) ?></div></td><td style="width:25%"><div class="label">Date de constatation</div><div class="value"><?= formatDate($encaissement['date_receipt']) ?></div></td><td><?php if ($typeDocument === 'recu'): ?><div class="label">Mode de paiement</div><div class="value"><?= e($methodLabelPdf) ?></div><?php else: ?><div class="label">Échéance</div><div class="value"><?= !empty($encaissement['due_date']) ? formatDate($encaissement['due_date']) : '—' ?></div><?php endif; ?></td></tr></table>
 
     <div class="section-title">Objet du paiement</div><div class="object"><?= e($encaissement['objet']) ?></div>
-    <div class="section-title">Montant encaissé</div>
-    <table class="amount-table"><tr><td class="amount-main"><div class="label">Montant reçu</div><div class="amount-value"><?= formatMontant((float)$encaissement['amount'],$encaissement['currency']) ?></div></td><td class="amount-side"><div class="label">Contre-valeur USD</div><div class="value"><?= formatMontant((float)$encaissement['amount_usd'],'USD') ?></div></td><td class="amount-side"><div class="label">Compte crédité</div><div class="value"><?= e($encaissement['account_nom'] ?? '—') ?></div><div style="margin-top:4px;color:#718096;font-size:7px"><?= e(ucfirst(str_replace('_',' ',(string)($encaissement['type_compte'] ?? '')))) ?></div></td></tr></table>
+    <div class="section-title"><?= $typeDocument === 'recu' ? 'Montant encaissé' : 'Montant dû' ?></div>
+    <table class="amount-table"><tr><td class="amount-main"><div class="label"><?= $typeDocument === 'recu' ? 'Montant reçu' : 'Montant à payer' ?></div><div class="amount-value"><?= formatMontant($typeDocument === 'recu' ? (float)$encaissement['amount_collected'] : (float)$encaissement['amount'],$encaissement['currency']) ?></div><?php if ($typeDocument === 'recu' && $restePdf > 0.005): ?><div style="margin-top:4px;color:#adc7e3;font-size:8px">Sur <?= formatMontant((float)$encaissement['amount'],$encaissement['currency']) ?> · reste <?= formatMontant($restePdf,$encaissement['currency']) ?></div><?php endif; ?></td><td class="amount-side"><div class="label">Contre-valeur USD</div><div class="value"><?= formatMontant($typeDocument === 'recu' ? (float)$encaissement['amount_collected_usd'] : (float)$encaissement['amount_usd'],'USD') ?></div></td><td class="amount-side"><div class="label">Compte crédité</div><div class="value"><?= e($encaissement['account_nom'] ?? '—') ?></div><div style="margin-top:4px;color:#718096;font-size:7px"><?= e(ucfirst(str_replace('_',' ',(string)($encaissement['type_compte'] ?? '')))) ?></div></td></tr></table>
 
     <div class="section-title">Traçabilité et références</div>
     <table class="reference-table">
         <tr><th>Référence paiement</th><td><?= e($encaissement['reference_payment'] ?: '—') ?></td></tr>
         <tr><th>Taux CDF/USD</th><td><?= !empty($encaissement['exchange_rate']) ? e($encaissement['exchange_rate']) : '—' ?></td></tr>
         <tr><th>Enregistré par</th><td><?= e($encaissement['created_by_nom'] ?? '—') ?></td></tr>
-        <tr><th>Validation</th><td><?= e($encaissement['validated_by_nom'] ?? '—') ?><?= !empty($encaissement['validated_at']) ? ' · '.e(date('d/m/Y à H:i',strtotime($encaissement['validated_at']))) : '' ?></td></tr>
-        <?php if(!empty($encaissement['financial_transaction_id'])): ?><tr><th>Écriture financière</th><td>Transaction #<?= (int)$encaissement['financial_transaction_id'] ?></td></tr><?php endif; ?>
+        <?php if (!empty($encaissement['title_number'])): ?><tr><th>Titre de recette</th><td><?= e($encaissement['title_number']) ?></td></tr><?php endif; ?><tr><th>Liquidé par</th><td><?= e($encaissement['liquidated_by_nom'] ?? '—') ?><?= !empty($encaissement['liquidated_at']) ? ' · '.e(date('d/m/Y',strtotime($encaissement['liquidated_at']))) : '' ?></td></tr><tr><th>Ordonnancé par</th><td><?= e($encaissement['ordered_by_nom'] ?? '—') ?><?= !empty($encaissement['ordered_at']) ? ' · '.e(date('d/m/Y',strtotime($encaissement['ordered_at']))) : '' ?></td></tr><?php if ($typeDocument === 'recu'): foreach ($versements as $v): if ($v['status'] !== 'valide') continue; ?><tr><th>Versement <?= e($v['collection_number']) ?></th><td><?= formatDate($v['collection_date']) ?> · <?= formatMontant((float)$v['amount'],$v['currency']) ?> · <?= e($v['account_nom'] ?? '—') ?></td></tr><?php endforeach; endif; ?>
+        
         <?php if($encaissement['status']==='annule'): ?><tr><th>Annulé par</th><td><?= e($encaissement['cancelled_by_nom'] ?? '—') ?></td></tr><tr><th>Motif d’annulation</th><td><?= e($encaissement['cancellation_reason'] ?? '—') ?></td></tr><?php endif; ?>
     </table>
     <?php if(!empty($encaissement['notes'])): ?><div class="section-title">Observations</div><div class="notes"><?= nl2br(e($encaissement['notes'])) ?></div><?php endif; ?>
 
-    <table class="signature-table"><tr><td>Signature du payeur</td><td class="gap"></td><td>Trésorier · Signature et cachet AMM</td></tr></table>
+    <table class="signature-table"><tr><td><?= $typeDocument === 'titre' ? 'Ordonnateur · Direction financière' : ($typeDocument === 'creance' ? 'Constaté par' : 'Signature du payeur') ?></td><td class="gap"></td><td><?= $typeDocument === 'recu' ? 'Trésorier · Signature et cachet AMM' : 'Signature et cachet AMM' ?></td></tr></table>
     <table class="footer-table"><tr><td>Document officiel généré par AMM-ERP · v<?= e(APP_VERSION) ?></td><td class="footer-right">Généré le <?= date('d/m/Y à H:i') ?> · Page 1/1</td></tr></table>
 </div>
 </body></html>

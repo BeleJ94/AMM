@@ -465,7 +465,7 @@ class FinancialTrackingController {
         $role = $_SESSION['user_role'] ?? '';
         $service = strtolower((string)($_SESSION['user_service'] ?? ''));
 
-        $autorise = in_array($role, ['admin', 'direction', 'chef_service', 'directeur_financier', 'directeur_general'], true)
+        $autorise = in_array($role, ['admin', 'admin_finance', 'direction', 'chef_service', 'directeur_financier', 'directeur_general'], true)
             || strpos($service, 'finance') !== false;
 
         if (!$autorise) {
@@ -478,7 +478,7 @@ class FinancialTrackingController {
         $role = $_SESSION['user_role'] ?? '';
         $service = strtolower((string)($_SESSION['user_service'] ?? ''));
         $service = strtr($service, ['è' => 'e', 'é' => 'e', 'ê' => 'e', 'à' => 'a']);
-        return in_array($role, ['admin', 'directeur_financier', 'directeur_general'], true)
+        return in_array($role, ['admin', 'admin_finance', 'directeur_financier', 'directeur_general'], true)
             || ($role === 'direction' && (strpos($service, 'financ') !== false || strpos($service, 'general') !== false));
     }
 }
