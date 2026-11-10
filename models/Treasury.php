@@ -2016,13 +2016,15 @@ class Treasury {
     }
 
     private function appliquerFiltresDemandes(string &$sql, array &$params, array $filtres): void {
-        if (!empty($filtres['status'])) {
+        if (($filtres['status'] ?? '') === 'validees') {
+            // Regroupement « Validées » : demandes approuvées, qu'elles soient en attente d'ordre, ordonnancées ou payées.
+            $sql .= " AND r.status IN ('validee_direction','ordre_emis','payee')";
+        } elseif (($filtres['status'] ?? '') === 'reponse_depassee') {
+            // Demandes en suspens dont la date de réponse prévue est passée sans reprise.
+            $sql .= " AND r.status = 'en_suspens' AND r.reminder_date IS NOT NULL AND r.reminder_date < CURDATE()";
+        } elseif (!empty($filtres['status'])) {
             $sql .= " AND r.status = ?";
             $params[] = $filtres['status'];
-        }
-        if (!empty($filtres['urgency'])) {
-            $sql .= " AND r.urgency = ?";
-            $params[] = $filtres['urgency'];
         }
         if (!empty($filtres['created_by'])) {
             $sql .= " AND r.created_by = ?";

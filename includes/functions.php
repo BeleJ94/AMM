@@ -81,6 +81,24 @@ function perimetreDemandesFonds(): array {
     return ['created_by' => (int)($_SESSION['user_id'] ?? 0)];
 }
 
+/** Demandeur simple (périmètre limité à ses propres demandes) : vue réduite à « Toutes mes demandes » et « Validées ». */
+function vueDemandeurSimplifiee(): bool {
+    return isset(perimetreDemandesFonds()['created_by']);
+}
+
+/** Statut d'une demande de fonds tel qu'affiché au demandeur, sans le détail des étapes internes : [libellé, ton, icône]. */
+function statutDemandeurSimplifie(string $status): array {
+    if (in_array($status, ['validee_direction', 'ordre_emis', 'payee'], true)) {
+        return $status === 'payee' ? ['Payée', 'success', 'bi-check-circle'] : ['Validée', 'success', 'bi-check2-circle'];
+    }
+    switch ($status) {
+        case 'brouillon': return ['Brouillon', 'secondary', 'bi-pencil-square'];
+        case 'rejetee':   return ['À corriger', 'danger', 'bi-exclamation-circle'];
+        case 'annulee':   return ['Annulée', 'secondary', 'bi-slash-circle'];
+        default:          return ['En cours de traitement', 'primary', 'bi-hourglass-split'];
+    }
+}
+
 /**
  * Génère un token CSRF et le stocke en session.
  * @return string Le token généré

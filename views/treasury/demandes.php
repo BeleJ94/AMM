@@ -30,19 +30,6 @@ if (!function_exists('treasuryRequestStatusBadge')) {
     }
 }
 
-if (!function_exists('treasuryUrgencyBadge')) {
-    function treasuryUrgencyBadge(string $urgency): string {
-        switch ($urgency) {
-            case 'haute':
-                return 'danger';
-            case 'moyenne':
-                return 'warning text-dark';
-            default:
-                return 'secondary';
-        }
-    }
-}
-
 if (!function_exists('treasuryRequestNextAction')) {
     function treasuryRequestNextAction(array $demande): array {
         $id = (int)$demande['id'];
@@ -124,6 +111,7 @@ $requestExportQuery = http_build_query(array_merge(['metric' => 'registre'], arr
 })));
 $accesDepartement = $accesDepartement ?? false;
 $peutCreerDemande = $peutCreerDemande ?? false;
+$vueDemandeur = $vueDemandeur ?? false;
 $requestStateLabels = [
     'brouillon' => 'Brouillon',
     'a_valider_chef' => 'Chef de dépt.',
@@ -216,14 +204,17 @@ $requestFilterStates = [
     <?php afficherFlash(); ?>
 
     <div class="row g-3 mb-3">
-        <?php foreach ([
+        <?php foreach ($vueDemandeur ? [
+            'total'=>['Toutes mes demandes','Demandes que j’ai créées','bi-card-list','primary'],
+            'validees'=>['Validées','Approuvées, ordonnancées ou payées','bi-check2-circle','success'],
+        ] : [
             'total'=>['Toutes les demandes','Volume enregistré','bi-card-list','primary'],
             'a_controler'=>['À contrôler','Trésorier A','bi-search','primary'],
             'soumise'=>['À valider','Comptable senior','bi-shield-check','warning'],
             'validee_comptable'=>['Circuit Direction','Visas de direction','bi-building-check','primary'],
-            'en_suspens'=>['En suspens','Reprises et rappels','bi-pause-circle','warning'],
+            'en_suspens'=>['En suspens', (int)($requestStats['reponse_depassee'] ?? 0) > 0 ? 'Dont ' . (int)$requestStats['reponse_depassee'] . ' réponse(s) en retard' : 'Aucune réponse en retard','bi-pause-circle','warning'],
             'validee_direction'=>['Prêtes pour ordre','Demandes approuvées','bi-file-earmark-check','success'],
-        ] as $metric => $kpi): ?><div class="col-6 col-md-4 col-xl-2"><div class="card erp-kpi erp-kpi-<?= $kpi[3] ?> request-kpi-card h-100" role="button" tabindex="0" data-kpi="<?= $metric ?>" aria-label="Consulter <?= e($kpi[0]) ?>"><div class="card-body"><div class="d-flex justify-content-between gap-2"><div class="erp-kpi-label"><?= e($kpi[0]) ?></div><span class="erp-kpi-icon"><i class="bi <?= $kpi[2] ?>"></i></span></div><div class="erp-kpi-value"><?= (int)($requestStats[$metric] ?? 0) ?></div><div class="erp-kpi-meta"><?= e($kpi[1]) ?></div></div></div></div><?php endforeach; ?>
+        ] as $metric => $kpi): ?><div class="<?= $vueDemandeur ? 'col-6 col-md-4 col-xl-3' : 'col-6 col-md-4 col-xl-2' ?>"><div class="card erp-kpi erp-kpi-<?= $kpi[3] ?> request-kpi-card h-100" role="button" tabindex="0" data-kpi="<?= $metric ?>" aria-label="Consulter <?= e($kpi[0]) ?>"><div class="card-body"><div class="d-flex justify-content-between gap-2"><div class="erp-kpi-label"><?= e($kpi[0]) ?></div><span class="erp-kpi-icon"><i class="bi <?= $kpi[2] ?>"></i></span></div><div class="erp-kpi-value"><?= (int)($requestStats[$metric] ?? 0) ?></div><div class="erp-kpi-meta"><?= e($kpi[1]) ?></div></div></div></div><?php endforeach; ?>
     </div>
 
 
@@ -255,22 +246,13 @@ $requestFilterStates = [
                     <div class="col-md-2" data-register-advanced>
                         <label class="form-label small fw-semibold" for="requestStateFilter">État de la demande</label>
                         <select id="requestStateFilter" class="form-select form-select-sm" name="status">
-                            <option value="">Toutes</option>
-                            <?php foreach ($requestFilterStates as $status => $label): ?>
+                            <option value=""><?= $vueDemandeur ? 'Toutes mes demandes' : 'Toutes' ?></option>
+                            <?php foreach ($vueDemandeur ? ['validees' => 'Validées'] : $requestFilterStates + ['validees' => 'Validées (toutes)', 'reponse_depassee' => 'Réponse en retard'] as $status => $label): ?>
                                 <option value="<?= e($status) ?>" <?= ($filtres['status'] ?? '') === $status ? 'selected' : '' ?>><?= e($label) ?></option>
                             <?php endforeach; ?>
                         </select>
                     </div>
-                    <div class="col-md-2" data-register-advanced>
-                        <label class="form-label small fw-semibold">Urgence</label>
-                        <select class="form-select form-select-sm" name="urgency">
-                            <option value="">Urgence</option>
-                            <option value="basse" <?= ($filtres['urgency'] ?? '') === 'basse' ? 'selected' : '' ?>>Basse</option>
-                            <option value="moyenne" <?= ($filtres['urgency'] ?? '') === 'moyenne' ? 'selected' : '' ?>>Moyenne</option>
-                            <option value="haute" <?= ($filtres['urgency'] ?? '') === 'haute' ? 'selected' : '' ?>>Haute</option>
-                        </select>
-                    </div>
-                    <div class="col-md-3">
+                    <div class="col-md-5">
                         <label class="form-label small fw-semibold">Recherche</label>
                         <input type="text" class="form-control form-control-sm" name="recherche" value="<?= e($filtres['recherche'] ?? '') ?>" placeholder="Numero, beneficiaire, objet...">
                     </div>
@@ -285,7 +267,7 @@ $requestFilterStates = [
                 <?php treasuryUiEmptyState('bi-card-checklist', 'Aucune demande trouvée', 'Ajustez les filtres ou créez une nouvelle demande de fonds.', $peutCreerDemande ? '<a href="' . APP_URL . '/treasury/demande-ajouter" class="btn btn-sm btn-primary"><i class="bi bi-plus-lg me-1"></i>Nouvelle demande</a>' : ''); ?>
             <?php else: ?>
                 <div class="table-responsive">
-                    <table class="table table-hover align-middle mb-0 w-100" id="tableDemandesFonds" data-register-table data-register-options='{"order":[[1,"desc"],[0,"desc"]],"stateSave":true,"columnDefs":[{"orderable":false,"searchable":true,"targets":8},{"className":"text-nowrap","targets":[0,1,5,6,7]}]}'>
+                    <table class="table table-hover align-middle mb-0 w-100" id="tableDemandesFonds" data-register-table data-register-options='{"order":[[1,"desc"],[0,"desc"]],"stateSave":true,"columnDefs":[{"orderable":false,"searchable":true,"targets":7},{"className":"text-nowrap","targets":[0,1,5,6]}]}'>
                         <thead class="table-dark">
                             <tr>
                                 <th>Numéro</th>
@@ -294,9 +276,8 @@ $requestFilterStates = [
                                 <th>Objet</th>
                                 <th>Categorie</th>
                                 <th>Montant</th>
-                                <th>Urgence</th>
                                 <th>État</th>
-                                <th>Prochaine action</th>
+                                <th><?= $vueDemandeur ? 'Suivi' : 'Prochaine action' ?></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -304,6 +285,13 @@ $requestFilterStates = [
                                 <?php
                                 $nextAction = treasuryRequestNextAction($demande);
                                 if ($accesDepartement) { $nextAction['url'] = APP_URL . '/treasury/demande-voir/' . (int)$demande['id']; $nextAction['button'] = 'Suivre'; }
+                                if ($vueDemandeur) {
+                                    // Vue demandeur : pas de détail des étapes internes ni des intervenants.
+                                    $statutSimple = statutDemandeurSimplifie($demande['status']);
+                                    $nextAction['label'] = $statutSimple[0]; $nextAction['tone'] = $statutSimple[1]; $nextAction['icon'] = $statutSimple[2];
+                                    $nextAction['owner'] = $demande['status'] === 'brouillon' ? 'À compléter et soumettre' : ($demande['status'] === 'rejetee' ? 'Consultez le motif' : '');
+                                    $nextAction['button'] = $demande['status'] === 'brouillon' ? 'Continuer' : 'Consulter';
+                                }
                                 $waitingDays = treasuryRequestWaitingDays($demande);
                                 $isClosed = in_array($demande['status'], ['payee', 'annulee'], true);
                                 $isLate = !$isClosed && $waitingDays >= 3;
@@ -319,15 +307,19 @@ $requestFilterStates = [
                                     <td><div class="request-object text-truncate" title="<?= e($demande['objet']) ?>"><?= e($demande['objet']) ?></div></td>
                                     <td><?= e($demande['category_nom'] ?? '—') ?></td>
                                     <td class="fw-semibold text-end" data-order="<?= e((string)(float)$demande['amount_usd']) ?>"><?= formatMontant((float)$demande['amount'], $demande['currency']) ?><?php if (isset($demande['approved_amount']) && (float)$demande['approved_amount'] < (float)$demande['amount']): ?><span class="d-block small text-success mt-1">Autorisé : <?= formatMontant((float)$demande['approved_amount'], $demande['currency']) ?></span><?php endif; ?></td>
-                                    <td><span class="badge bg-<?= treasuryUrgencyBadge($demande['urgency']) ?>"><?= e(treasuryUiLabel($demande['urgency'])) ?></span></td>
+                                    <?php if ($vueDemandeur): ?>
+                                    <?php $classeSimple = in_array($demande['status'], ['validee_direction','ordre_emis','payee'], true) ? 'payee' : (in_array($demande['status'], ['brouillon','rejetee','annulee'], true) ? $demande['status'] : 'a_controler'); ?>
+                                    <td class="request-state-cell request-state-<?= e($classeSimple) ?>"><?= e(statutDemandeurSimplifie($demande['status'])[0]) ?></td>
+                                    <?php else: ?>
                                     <td class="request-state-cell request-state-<?= e(array_key_exists($demande['status'], $requestStateLabels) ? $demande['status'] : 'unknown') ?>"><?= e($requestStateLabels[$demande['status']] ?? treasuryUiLabel($demande['status'])) ?></td>
-                                    <td data-search="<?= e(treasuryUiLabel($demande['status']) . ' ' . $nextAction['label'] . ' ' . $nextAction['owner']) ?>">
+                                    <?php endif; ?>
+                                    <td data-search="<?= e(($vueDemandeur ? '' : treasuryUiLabel($demande['status']) . ' ') . $nextAction['label'] . ' ' . $nextAction['owner']) ?>">
                                         <div class="d-flex align-items-center justify-content-between gap-3 request-next-action tone-<?= e($nextAction['tone']) ?>">
                                             <div>
                                                 <div class="request-action-label"><i class="bi <?= e($nextAction['icon']) ?> me-1 text-<?= e($nextAction['tone']) ?>"></i><?= e($nextAction['label']) ?></div>
-                                                <div class="request-action-owner"><?= e($nextAction['owner']) ?></div>
-                                                <?php if ($demande['status'] === 'en_suspens' && !empty($demande['reminder_date'])): ?><div class="request-action-age <?= $demande['reminder_date'] <= date('Y-m-d') ? 'is-late' : '' ?>"><i class="bi bi-bell"></i>Rappel le <?= formatDate($demande['reminder_date']) ?></div><?php endif; ?>
-                                                <?php if (!$isClosed): ?>
+                                                <?php if ($nextAction['owner'] !== ''): ?><div class="request-action-owner"><?= e($nextAction['owner']) ?></div><?php endif; ?>
+                                                <?php if ($demande['status'] === 'en_suspens' && !empty($demande['reminder_date'])): ?><div class="request-action-age <?= $demande['reminder_date'] < date('Y-m-d') ? 'is-late' : '' ?>"><i class="bi bi-calendar-event"></i>Réponse prévue le <?= formatDate($demande['reminder_date']) ?></div><?php endif; ?>
+                                                <?php if (!$isClosed && !$vueDemandeur): ?>
                                                     <div class="request-action-age <?= $isLate ? 'is-late' : '' ?>"><i class="bi bi-clock"></i><?= $waitingDays === 0 ? 'Dernière action aujourd’hui' : 'Sans action depuis ' . $waitingDays . ' jour' . ($waitingDays > 1 ? 's' : '') ?></div>
                                                 <?php endif; ?>
                                             </div>
@@ -365,8 +357,8 @@ $requestFilterStates = [
                     <div class="col-md-4"><div class="kpi-detail-summary p-3"><div class="text-muted small mb-1">Montant moyen</div><div class="kpi-detail-summary-value" id="requestKpiAverage">0,00 USD</div></div></div>
                 </div>
                 <div class="table-responsive border rounded-3">
-                    <table class="table table-hover mb-0 kpi-detail-table" id="requestKpiTable" data-register-table data-register-order='[]' data-register-filter-columns='{"6":"Urgence","7":"Statut"}' data-register-options='{"columnDefs":[{"targets":8,"orderable":false}]}'>
-                        <thead><tr><th>Numéro</th><th>Date</th><th>Bénéficiaire</th><th>Objet</th><th>Catégorie</th><th class="text-end">Montant</th><th>Urgence</th><th>Statut</th><th></th></tr></thead>
+                    <table class="table table-hover mb-0 kpi-detail-table" id="requestKpiTable" data-register-table data-register-order='[]' data-register-filter-columns='{"6":"Statut"}' data-register-options='{"columnDefs":[{"targets":7,"orderable":false}]}'>
+                        <thead><tr><th>Numéro</th><th>Date</th><th>Bénéficiaire</th><th>Objet</th><th>Catégorie</th><th class="text-end">Montant</th><th>Statut</th><th></th></tr></thead>
                         <tbody id="requestKpiDetailBody"></tbody>
                     </table>
                 </div>
@@ -404,7 +396,6 @@ function openRequestKpi(metric) {
         body.innerHTML = '';
     } else {
         body.innerHTML = data.rows.map(function(row) {
-            var urgencyClass = row.urgency === 'Haute' ? 'danger' : (row.urgency === 'Moyenne' ? 'warning text-dark' : 'secondary');
             return '<tr>'
                 + '<td><strong class="text-primary">' + escapeRequestKpiHtml(row.number) + '</strong></td>'
                 + '<td class="text-nowrap">' + escapeRequestKpiHtml(row.date) + '</td>'
@@ -412,7 +403,6 @@ function openRequestKpi(metric) {
                 + '<td style="max-width:260px">' + escapeRequestKpiHtml(row.object) + '</td>'
                 + '<td>' + escapeRequestKpiHtml(row.category) + '</td>'
                 + '<td class="text-end fw-semibold text-nowrap">' + escapeRequestKpiHtml(row.amount) + '</td>'
-                + '<td><span class="badge bg-' + urgencyClass + '">' + escapeRequestKpiHtml(row.urgency) + '</span></td>'
                 + '<td><span class="badge bg-light text-dark border">' + escapeRequestKpiHtml(row.status) + '</span></td>'
                 + '<td><a class="btn btn-outline-primary btn-sm" href="' + escapeRequestKpiHtml(row.url) + '" title="Ouvrir"><i class="bi bi-eye"></i></a></td>'
                 + '</tr>';

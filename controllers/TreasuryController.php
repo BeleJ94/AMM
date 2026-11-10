@@ -55,7 +55,7 @@ class TreasuryController {
         }
         foreach ($this->treasuryModel->listerDemandes(['status'=>'en_suspens'], 20, 0) as $demande) {
             if ($this->peutValiderNiveau((string)$demande['suspended_level'])) {
-                $actionsPrioritaires[] = $this->actionDashboardDemande($demande, 'En suspens · rappel le ' . formatDate($demande['reminder_date']), 'Validateur du dossier', 'Reprendre', 'warning');
+                $actionsPrioritaires[] = $this->actionDashboardDemande($demande, 'En suspens · réponse prévue le ' . formatDate($demande['reminder_date']), 'Validateur du dossier', 'Reprendre', 'warning');
             }
         }
 
@@ -406,11 +406,15 @@ class TreasuryController {
         $page = max(1, (int)($_GET['page'] ?? 1));
         $filtres = [
             'status' => $_GET['status'] ?? '',
-            'urgency' => $_GET['urgency'] ?? '',
             'date_debut' => $_GET['date_debut'] ?? '',
             'date_fin' => $_GET['date_fin'] ?? '',
             'recherche' => trim($_GET['recherche'] ?? ''),
         ];
+        $vueDemandeur = vueDemandeurSimplifiee();
+        if ($vueDemandeur && $filtres['status'] !== 'validees') {
+            // Le demandeur ne suit pas les étapes internes : seules « Toutes mes demandes » et « Validées » existent.
+            $filtres['status'] = '';
+        }
 
         // DataTables assure la pagination, le tri et la recherche côté interface.
         // Une limite de sécurité élevée évite une double pagination incohérente.
@@ -423,8 +427,12 @@ class TreasuryController {
             'soumise' => $this->treasuryModel->compterDemandes(array_merge(['status' => 'soumise'], $perimetre)),
             'validee_comptable' => $this->treasuryModel->compterDemandes(array_merge(['status' => 'validee_comptable'], $perimetre)),
             'validee_direction' => $this->treasuryModel->compterDemandes(array_merge(['status' => 'validee_direction'], $perimetre)),
-            'haute' => $this->treasuryModel->compterDemandes(array_merge(['urgency' => 'haute'], $perimetre)),
+            'validees' => $this->treasuryModel->compterDemandes(array_merge(['status' => 'validees'], $perimetre)),
+            'reponse_depassee' => $this->treasuryModel->compterDemandes(array_merge(['status' => 'reponse_depassee'], $perimetre)),
         ];
+        if ($vueDemandeur) {
+            $requestStats = array_intersect_key($requestStats, array_flip(['total', 'validees']));
+        }
         $requestKpiDetails = [];
         foreach (array_keys($requestStats) as $metric) {
             $definition = $this->definitionKpiDemandes($metric);
@@ -436,7 +444,7 @@ class TreasuryController {
                 'total_usd' => array_sum(array_map(static function ($ligne) {
                     return (float)($ligne['amount_usd'] ?? 0);
                 }, $lignes)),
-                'rows' => array_map(function ($ligne) {
+                'rows' => array_map(function ($ligne) use ($vueDemandeur) {
                     return [
                         'id' => (int)$ligne['id'],
                         'number' => $ligne['request_number'],
@@ -446,21 +454,20 @@ class TreasuryController {
                         'category' => $ligne['category_nom'] ?? '—',
                         'amount' => formatMontant((float)$ligne['amount'], $ligne['currency']),
                         'amount_usd' => (float)$ligne['amount_usd'],
-                        'urgency' => $this->libelleTresorerie($ligne['urgency']),
-                        'status' => $this->libelleTresorerie($ligne['status']),
+                        'status' => $vueDemandeur ? statutDemandeurSimplifie($ligne['status'])[0] : $this->libelleTresorerie($ligne['status']),
                         'url' => APP_URL . '/treasury/demande-voir/' . (int)$ligne['id'],
                     ];
                 }, $lignes),
             ];
         }
 
-        $this->render('demandes', compact('filtres', 'demandes', 'requestStats', 'requestKpiDetails', 'accesDepartement', 'peutCreerDemande'));
+        $this->render('demandes', compact('filtres', 'demandes', 'requestStats', 'requestKpiDetails', 'accesDepartement', 'peutCreerDemande', 'vueDemandeur'));
     }
 
     public function pdfDemandesKpi(): void {
         $this->verifierAccesTresorerie();
         $metric = $_GET['metric'] ?? 'total';
-        if (!in_array($metric, ['total','a_controler','en_suspens','soumise','validee_comptable','validee_direction','haute','registre'], true)) {
+        if (!in_array($metric, ['total','a_controler','en_suspens','soumise','validee_comptable','validee_direction','validees','reponse_depassee','registre'], true)) {
             $metric = 'total';
         }
         $definition = $metric === 'registre' ? $this->definitionRegistreDemandes() : $this->definitionKpiDemandes($metric);
@@ -521,7 +528,7 @@ class TreasuryController {
     public function excelDemandesKpi(): void {
         $this->verifierAccesTresorerie();
         $metric = $_GET['metric'] ?? 'total';
-        if (!in_array($metric, ['total','a_controler','en_suspens','soumise','validee_comptable','validee_direction','haute','registre'], true)) {
+        if (!in_array($metric, ['total','a_controler','en_suspens','soumise','validee_comptable','validee_direction','validees','reponse_depassee','registre'], true)) {
             $metric = 'total';
         }
         $definition = $metric === 'registre' ? $this->definitionRegistreDemandes() : $this->definitionKpiDemandes($metric);
@@ -563,11 +570,11 @@ class TreasuryController {
             return (float)($ligne['amount_usd'] ?? 0);
         }, $demandesKpi));
         $averageUsd = count($demandesKpi) > 0 ? $totalUsd / count($demandesKpi) : 0;
-        $highCount = count(array_filter($demandesKpi, static function ($ligne) {
-            return ($ligne['urgency'] ?? '') === 'haute';
+        $validatedCount = count(array_filter($demandesKpi, static function ($ligne) {
+            return in_array($ligne['status'] ?? '', ['validee_direction', 'ordre_emis', 'payee'], true);
         }));
-        $summary->fromArray([['VOLUME', 'MONTANT TOTAL USD', 'MONTANT MOYEN USD', 'URGENCES HAUTES']], null, 'A5');
-        $summary->fromArray([[count($demandesKpi), $totalUsd, $averageUsd, $highCount]], null, 'A6');
+        $summary->fromArray([['VOLUME', 'MONTANT TOTAL USD', 'MONTANT MOYEN USD', 'VALIDÉES']], null, 'A5');
+        $summary->fromArray([[count($demandesKpi), $totalUsd, $averageUsd, $validatedCount]], null, 'A6');
         $summary->getStyle('A5:D5')->applyFromArray([
             'font' => ['bold' => true, 'size' => 8, 'color' => ['rgb' => $white]],
             'fill' => ['fillType' => 'solid', 'startColor' => ['rgb' => $blue]],
@@ -625,14 +632,14 @@ class TreasuryController {
         $details->setShowGridlines(false);
         $details->freezePane('A5');
         $isRegister = $metric === 'registre';
-        $detailLastColumn = $isRegister ? 'K' : 'J';
+        $detailLastColumn = $isRegister ? 'J' : 'I';
         $details->mergeCells('A1:' . $detailLastColumn . '1');
         $details->setCellValue('A1', $definition['title'] . ' — DÉTAIL DES DEMANDES');
         $details->getStyle('A1:' . $detailLastColumn . '1')->applyFromArray([
             'font' => ['bold' => true, 'size' => 16, 'color' => ['rgb' => $white]],
             'fill' => ['fillType' => 'solid', 'startColor' => ['rgb' => $navy]],
         ]);
-        $detailHeaders = ['Numéro', 'Date', 'Bénéficiaire', 'Objet', 'Catégorie', 'Montant', 'Devise', 'Montant USD', 'Urgence', 'Statut'];
+        $detailHeaders = ['Numéro', 'Date', 'Bénéficiaire', 'Objet', 'Catégorie', 'Montant', 'Devise', 'Montant USD', 'Statut'];
         if ($isRegister) $detailHeaders[] = 'Prochaine action';
         $details->fromArray([$detailHeaders], null, 'A4');
         $details->getStyle('A4:' . $detailLastColumn . '4')->applyFromArray([
@@ -661,7 +668,6 @@ class TreasuryController {
                 (float)$demande['amount'],
                 $demande['currency'],
                 (float)$demande['amount_usd'],
-                $this->libelleTresorerie($demande['urgency']),
                 $this->libelleTresorerie($demande['status']),
             ];
             if ($isRegister) {
@@ -689,8 +695,8 @@ class TreasuryController {
             $details->getStyle('A' . $r . ':' . $detailLastColumn . $r)->getFill()->setFillType('solid')->getStartColor()->setRGB('F8FAFC');
         }
         $details->setAutoFilter('A4:' . $detailLastColumn . $lastRow);
-        $widths = ['A'=>20,'B'=>13,'C'=>25,'D'=>40,'E'=>22,'F'=>16,'G'=>10,'H'=>17,'I'=>14,'J'=>22];
-        if ($isRegister) $widths['K'] = 32;
+        $widths = ['A'=>20,'B'=>13,'C'=>25,'D'=>40,'E'=>22,'F'=>16,'G'=>10,'H'=>17,'I'=>22];
+        if ($isRegister) $widths['J'] = 32;
         foreach ($widths as $column => $width) $details->getColumnDimension($column)->setWidth($width);
         $details->getStyle('C5:E' . $lastRow)->getAlignment()->setWrapText(true);
         $details->getPageSetup()->setOrientation(PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::ORIENTATION_LANDSCAPE);
@@ -743,7 +749,6 @@ class TreasuryController {
                     'exchange_rate' => (float)($_POST['exchange_rate'] ?? 0),
                     'category_id' => (int)($_POST['category_id'] ?? 0),
                     'preferred_account_id' => $accesDepartement ? 0 : (int)($_POST['preferred_account_id'] ?? 0),
-                    'urgency' => $_POST['urgency'] ?? 'moyenne',
                     'created_by' => (int)$_SESSION['user_id'],
                     'amount' => 0,
                 ];
@@ -759,7 +764,6 @@ class TreasuryController {
                 if ($donnees['description'] === '') $erreurs[] = 'Expliquez la justification du besoin.';
                 $date = DateTimeImmutable::createFromFormat('!Y-m-d', (string)$donnees['request_date']);
                 if (!$date || $date->format('Y-m-d') !== $donnees['request_date']) $erreurs[] = 'La date de la demande est invalide.';
-                if (!in_array($donnees['urgency'], ['basse','moyenne','haute'], true)) $erreurs[] = 'Priorité invalide.';
                 if (empty($erreurs) && !empty($_FILES['justification_file']['name'])) {
                     $preuve = traiterUpload($_FILES['justification_file'], 'treasury');
                     if ($preuve === false) $erreurs[] = 'Le justificatif est invalide ou dépasse la taille autorisée.';
@@ -1110,8 +1114,8 @@ class TreasuryController {
             }
             $this->notifierCreateurDemande($maj, 'Demande ' . $maj['request_number'] . ' : ' . $this->libelleTresorerie($maj['status']) . '.');
         }
-        $messages = ['annule'=>'Demande annulée. Le motif est conservé.', 'en_suspens'=>'Demande mise en suspens. Le rappel et le motif sont enregistrés.', 'valide'=>'Validation enregistrée. Le montant autorisé est affiché sur la fiche.', 'reprendre'=>'Demande reprise au même niveau de validation.'];
-        flashMessage($ok ? 'succes' : 'erreur', $ok ? $messages[$decision] : 'La décision n’a pas été enregistrée. Vérifiez le niveau, le montant autorisé, le motif et la date de rappel.');
+        $messages = ['annule'=>'Demande annulée. Le motif est conservé.', 'en_suspens'=>'Demande mise en suspens. La date de réponse prévue et le motif sont enregistrés.', 'valide'=>'Validation enregistrée. Le montant autorisé est affiché sur la fiche.', 'reprendre'=>'Demande reprise au même niveau de validation.'];
+        flashMessage($ok ? 'succes' : 'erreur', $ok ? $messages[$decision] : 'La décision n’a pas été enregistrée. Vérifiez le niveau, le montant autorisé, le motif et la date de réponse prévue.');
         redirect('/treasury/demande-voir/' . (int)$id);
     }
     public function annulerDemande(?string $id): void {
@@ -2382,7 +2386,7 @@ class TreasuryController {
     private function definitionKpiDemandes(string $metric): array {
         $definitions = [
             'a_controler' => ['title'=>'Contrôle trésorerie', 'subtitle'=>'Demandes à vérifier avant transmission au comptable', 'filters'=>['status'=>'a_controler']],
-            'en_suspens' => ['title'=>'Demandes en suspens', 'subtitle'=>'Décisions différées avec date de rappel', 'filters'=>['status'=>'en_suspens']],
+            'en_suspens' => ['title'=>'Demandes en suspens', 'subtitle'=>'Décisions différées avec date de réponse prévue', 'filters'=>['status'=>'en_suspens']],
             'total' => [
                 'title' => 'Toutes les demandes',
                 'subtitle' => 'Vue consolidée du portefeuille des demandes de fonds',
@@ -2403,10 +2407,15 @@ class TreasuryController {
                 'subtitle' => 'Demandes autorisées pour émission d’un ordre de paiement',
                 'filters' => ['status' => 'validee_direction'],
             ],
-            'haute' => [
-                'title' => 'Urgences hautes',
-                'subtitle' => 'Demandes prioritaires nécessitant une attention immédiate',
-                'filters' => ['urgency' => 'haute'],
+            'reponse_depassee' => [
+                'title' => 'Réponses en retard',
+                'subtitle' => 'Demandes en suspens dont la date de réponse prévue est dépassée',
+                'filters' => ['status' => 'reponse_depassee'],
+            ],
+            'validees' => [
+                'title' => 'Demandes validées',
+                'subtitle' => 'Demandes approuvées : prêtes pour ordre, ordonnancées ou payées',
+                'filters' => ['status' => 'validees'],
             ],
         ];
         return $definitions[$metric] ?? $definitions['total'];
@@ -2461,16 +2470,13 @@ class TreasuryController {
     }
 
     private function definitionRegistreDemandes(): array {
-        $statusAutorises = ['brouillon','a_valider_chef','a_controler','en_suspens','soumise','validee_comptable','validee_direction','rejetee','ordre_emis','payee','annulee'];
-        $urgencesAutorisees = ['basse','moyenne','haute'];
+        $statusAutorises = ['brouillon','a_valider_chef','a_controler','en_suspens','soumise','validee_comptable','validee_direction','rejetee','ordre_emis','payee','annulee','validees','reponse_depassee'];
         $status = in_array($_GET['status'] ?? '', $statusAutorises, true) ? $_GET['status'] : '';
-        $urgence = in_array($_GET['urgency'] ?? '', $urgencesAutorisees, true) ? $_GET['urgency'] : '';
         $dateDebut = preg_match('/^\d{4}-\d{2}-\d{2}$/', $_GET['date_debut'] ?? '') ? $_GET['date_debut'] : '';
         $dateFin = preg_match('/^\d{4}-\d{2}-\d{2}$/', $_GET['date_fin'] ?? '') ? $_GET['date_fin'] : '';
         $recherche = trim((string)($_GET['recherche'] ?? ''));
         $filters = array_filter([
             'status' => $status,
-            'urgency' => $urgence,
             'date_debut' => $dateDebut,
             'date_fin' => $dateFin,
             'recherche' => $recherche,
@@ -2480,7 +2486,6 @@ class TreasuryController {
 
         $criteres = [];
         if ($status !== '') $criteres[] = 'statut : ' . $this->libelleTresorerie($status);
-        if ($urgence !== '') $criteres[] = 'urgence : ' . $this->libelleTresorerie($urgence);
         if ($dateDebut !== '') $criteres[] = 'du ' . date('d/m/Y', strtotime($dateDebut));
         if ($dateFin !== '') $criteres[] = 'au ' . date('d/m/Y', strtotime($dateFin));
         if ($recherche !== '') $criteres[] = 'recherche : « ' . $recherche . ' »';
@@ -2505,9 +2510,8 @@ class TreasuryController {
             'ordre_emis' => 'Ordre émis',
             'payee' => 'Payée',
             'annulee' => 'Annulée',
-            'basse' => 'Basse',
-            'moyenne' => 'Moyenne',
-            'haute' => 'Haute',
+            'validees' => 'Validées',
+            'reponse_depassee' => 'Réponse en retard',
         ];
         return $labels[$value] ?? ucfirst(str_replace('_', ' ', $value));
     }
@@ -2535,7 +2539,6 @@ class TreasuryController {
             $categorie = $this->financeModel->trouverCategorieParId((int)$donnees['category_id']);
             if (!$categorie || empty($categorie['actif']) || $categorie['type_flux'] !== 'depense') $erreurs[] = 'Sélectionnez une catégorie de dépense active.';
         }
-        if (!in_array($donnees['urgency'], ['basse','moyenne','haute'], true)) $erreurs[] = 'Urgence invalide.';
     }
 
     private function demandeAccessible(int $id): array {

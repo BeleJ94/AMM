@@ -67,7 +67,7 @@ $nextAction = [
     'brouillon' => ['Soumettre la demande', 'Elle sera validée par le chef de département puis contrôlée par le Trésorier A avant la validation comptable.', 'bi-send'],
     'a_valider_chef' => ['Validation du chef de département attendue', (!empty($chefsAttendus) ? 'En attente de : ' . implode(', ', $chefsAttendus) . ' (chef ' . ($demande['department'] ?? '') . '). ' : '') . 'Le chef vérifie le besoin avant sa transmission au Trésorier A.', 'bi-person-check'],
     'a_controler' => ['Contrôle du Trésorier A attendu', 'Le Trésorier A vérifie le dossier et le transmet au Comptable senior.', 'bi-search'],
-    'en_suspens' => ['Demande en suspens', 'Le traitement reprendra au niveau ' . treasuryUiLabel($demande['suspended_level'] ?? '') . (!empty($demande['reminder_date']) ? '. Rappel prévu le ' . formatDate($demande['reminder_date']) . '.' : '.'), 'bi-pause-circle'],
+    'en_suspens' => ['Demande en suspens', 'Le traitement reprendra au niveau ' . treasuryUiLabel($demande['suspended_level'] ?? '') . (!empty($demande['reminder_date']) ? '. Réponse prévue le ' . formatDate($demande['reminder_date']) . '.' : '.'), 'bi-pause-circle'],
     'soumise' => ['Contrôle comptable attendu', 'La demande est en attente de la décision du Comptable senior.', 'bi-hourglass-split'],
     'validee_comptable' => $directionNextAction,
     'validee_direction' => ['Émettre l’ordre de paiement', 'La demande est approuvée et prête pour l’ordonnancement.', 'bi-file-earmark-check'],
@@ -76,7 +76,21 @@ $nextAction = [
     'rejetee' => ['Demande rejetée', 'Consultez l’historique pour connaître la décision et son motif.', 'bi-x-octagon'],
     'annulee' => ['Demande annulée', 'Aucune action financière supplémentaire n’est attendue.', 'bi-slash-circle'],
 ][$demande['status']] ?? ['Suivi en cours', 'Consultez le statut et l’historique de la demande.', 'bi-info-circle'];
-$urgencyClass = ['basse' => 'success', 'moyenne' => 'warning', 'haute' => 'danger'][$demande['urgency']] ?? 'secondary';
+$vueDemandeur = vueDemandeurSimplifiee();
+if ($vueDemandeur) {
+    // Vue demandeur : statut simplifié, sans le détail des étapes internes.
+    $statutSimple = statutDemandeurSimplifie($demande['status']);
+    $nextAction = [
+        'brouillon' => ['Soumettre la demande', 'Complétez votre demande puis soumettez-la pour traitement.', 'bi-send'],
+        'rejetee' => ['Demande à corriger', 'Votre demande a été rejetée. Consultez le motif ci-dessous.', 'bi-exclamation-circle'],
+        'annulee' => ['Demande annulée', 'Aucune action supplémentaire n’est attendue.', 'bi-slash-circle'],
+        'payee' => ['Demande payée', 'Le paiement a été exécuté.', 'bi-check-circle'],
+    ][$demande['status']] ?? (
+        $statutSimple[0] === 'Validée'
+            ? ['Demande validée', 'Votre demande a été approuvée.', 'bi-check2-circle']
+            : ['Demande en cours de traitement', $isSuspended && !empty($demande['reminder_date']) ? 'Date de réponse prévue : ' . formatDate($demande['reminder_date']) . '.' : 'Votre demande est en cours d’examen.', 'bi-hourglass-split']
+    );
+}
 ?>
 <link rel="stylesheet" href="<?= APP_URL ?>/assets/css/treasury-requests.css">
 
@@ -149,7 +163,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 <div class="col-lg-8">
                     <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
                         <span class="request-number"><?= e($demande['request_number']) ?></span>
-                        <span class="request-status"><i class="bi bi-circle-fill small text-<?= $isStopped ? 'danger' : 'primary' ?>"></i><?= e(treasuryUiLabel($demande['status'])) ?></span>
+                        <span class="request-status"><i class="bi bi-circle-fill small text-<?= $isStopped ? 'danger' : 'primary' ?>"></i><?= e($vueDemandeur ? $statutSimple[0] : treasuryUiLabel($demande['status'])) ?></span>
                     </div>
                     <div class="fw-semibold"><?= e($demande['objet']) ?></div>
                     <div class="small text-muted mt-1"><?= e($demande['department'] ?? 'Département non renseigné') ?> · <?= e($demande['beneficiary']) ?> · <?= formatDate($demande['request_date']) ?></div>
@@ -164,16 +178,15 @@ document.addEventListener('DOMContentLoaded', function () {
             </div>
         </div>
         <div class="row g-0 request-meta-grid px-3 px-md-4">
-            <div class="col-md-4 pe-md-4"><div class="request-kpi"><div class="request-kpi-label">Catégorie</div><div class="request-kpi-value"><?= e($demande['category_nom'] ?? 'Non renseignée') ?></div></div></div>
-            <div class="col-md-4 px-md-4"><div class="request-kpi"><div class="request-kpi-label">Urgence</div><div class="request-kpi-value"><span class="badge bg-<?= $urgencyClass ?>"><?= e(treasuryUiLabel($demande['urgency'])) ?></span></div></div></div>
-            <div class="col-md-4 ps-md-4"><div class="request-kpi"><div class="request-kpi-label">Compte souhaité</div><div class="request-kpi-value"><?= e($demande['preferred_account_nom'] ?? 'À déterminer') ?></div></div></div>
+            <div class="col-md-6 pe-md-4"><div class="request-kpi"><div class="request-kpi-label">Catégorie</div><div class="request-kpi-value"><?= e($demande['category_nom'] ?? 'Non renseignée') ?></div></div></div>
+            <div class="col-md-6 ps-md-4"><div class="request-kpi"><div class="request-kpi-label">Compte souhaité</div><div class="request-kpi-value"><?= e($demande['preferred_account_nom'] ?? 'À déterminer') ?></div></div></div>
         </div>
         <div class="request-next <?= $isStopped ? 'stopped' : '' ?> <?= $isSuspended ? 'bg-warning-subtle' : '' ?> px-3 px-md-4 py-3 d-flex align-items-start gap-3">
             <i class="bi <?= e($nextAction[2]) ?> text-<?= $isStopped ? 'danger' : 'secondary' ?>"></i>
             <div class="flex-grow-1"><div class="small fw-bold"><?= e($nextAction[0]) ?></div><div class="small text-muted"><?= e($nextAction[1]) ?></div></div>
         </div>
     </section>
-    <?php if (!$isStopped): ?><div class="tr-workflow mb-3" aria-label="Progression de la demande"><?php foreach (array_values($workflowSteps) as $stepIndex => $step): ?><div class="tr-workflow-step <?= $currentWorkflowIndex !== false && $stepIndex < $currentWorkflowIndex ? 'is-done' : ($stepIndex === $currentWorkflowIndex ? 'is-current' : '') ?>"><i class="bi <?= e($step['icon']) ?> me-1"></i><?= e($step['label']) ?></div><?php endforeach; ?></div><?php endif; ?>
+    <?php if (!$isStopped && !$vueDemandeur): ?><div class="tr-workflow mb-3" aria-label="Progression de la demande"><?php foreach (array_values($workflowSteps) as $stepIndex => $step): ?><div class="tr-workflow-step <?= $currentWorkflowIndex !== false && $stepIndex < $currentWorkflowIndex ? 'is-done' : ($stepIndex === $currentWorkflowIndex ? 'is-current' : '') ?>"><i class="bi <?= e($step['icon']) ?> me-1"></i><?= e($step['label']) ?></div><?php endforeach; ?></div><?php endif; ?>
 
     <?php if ($isOwnRequest && in_array($demande['status'], ['a_valider_chef','soumise','validee_comptable'], true)): ?>
         <div class="small text-muted mb-4"><i class="bi bi-shield-lock me-1"></i>Séparation des tâches active : le créateur ou soumetteur ne peut pas approuver sa propre demande.</div>
@@ -192,6 +205,7 @@ document.addEventListener('DOMContentLoaded', function () {
                         <div class="col-md-6"><div class="request-detail-row"><div class="request-field-label">Créée par</div><div class="request-detail-value mt-1"><?= e($demande['created_by_nom'] ?? '—') ?></div></div></div>
                         <div class="col-md-6"><div class="request-detail-row"><div class="request-field-label">Soumise par</div><div class="request-detail-value mt-1"><?= e($demande['submitted_by_nom'] ?? 'Non soumise') ?></div></div></div>
                     </div>
+                    <?php if ($vueDemandeur && $demande['status'] === 'rejetee'): ?><div class="alert alert-danger mt-3 mb-0"><strong>Motif du rejet :</strong><br><?= nl2br(e($demande['rejection_reason'] ?? '—')) ?></div><?php endif; ?>
                     <?php if ($demande['status'] === 'annulee'): ?><div class="alert alert-danger mt-3 mb-0"><strong>Motif d’annulation :</strong><br><?= nl2br(e($demande['cancellation_reason'] ?? '—')) ?></div><?php endif; ?>
                     <div class="d-flex flex-wrap gap-2 mt-4">
                         <?php if (!empty($demande['justification_file'])): ?><button type="button" class="btn btn-outline-primary" data-apercu-url="<?= e(UPLOAD_URL . $demande['justification_file']) ?>" data-apercu-nom="<?= e(basename($demande['justification_file'])) ?>"><i class="bi bi-eye me-1"></i>Aperçu du justificatif</button><a href="<?= e(UPLOAD_URL . $demande['justification_file']) ?>" target="_blank" rel="noopener" download class="btn btn-outline-success"><i class="bi bi-download me-1"></i>Télécharger</a><?php endif; ?>
@@ -201,6 +215,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 </div>
             </div>
 
+            <?php if (!$vueDemandeur): ?>
             <div class="card section-card request-section-card mb-4">
                 <div class="card-header bg-transparent border-0 pt-4 px-4"><h3 class="h6 fw-bold mb-0">Historique des décisions</h3></div>
                 <div class="card-body px-4">
@@ -215,13 +230,14 @@ document.addEventListener('DOMContentLoaded', function () {
                                     <div class="small mt-1"><span class="badge bg-<?= treasuryDecisionBadge($validation['decision']) ?>"><?= e(treasuryUiLabel($validation['decision'])) ?></span> par <?= e($validation['approved_by_nom'] ?? '—') ?></div>
                                     <?php if (!empty($validation['approval_comment'])): ?><div class="small text-muted mt-2"><?= e($validation['approval_comment']) ?></div><?php endif; ?>
                                     <?php if (isset($validation['approved_amount'])): ?><div class="small text-success mt-1">Montant autorisé : <strong><?= formatMontant((float)$validation['approved_amount'], $demande['currency']) ?></strong><?= (float)$validation['approved_amount'] < (float)$demande['amount'] ? ' · Validation partielle' : ' · Validation totale' ?></div><?php endif; ?>
-                                    <?php if (!empty($validation['reminder_date'])): ?><div class="small text-warning-emphasis mt-1"><i class="bi bi-bell me-1"></i>Rappel prévu le <?= formatDate($validation['reminder_date']) ?></div><?php endif; ?>
+                                    <?php if (!empty($validation['reminder_date'])): ?><div class="small text-warning-emphasis mt-1"><i class="bi bi-calendar-event me-1"></i>Réponse prévue le <?= formatDate($validation['reminder_date']) ?></div><?php endif; ?>
                                 </div>
                             <?php endforeach; ?>
                         </div>
                     <?php endif; ?>
                 </div>
             </div>
+            <?php endif; ?>
         </div>
 
         <?php if ($canValidate || $canControl || $canResume || $canChef): ?>
@@ -257,7 +273,7 @@ document.addEventListener('DOMContentLoaded', function () {
                                 </select></div>
                                 <div class="mb-3"><label for="decisionField" class="form-label fw-semibold">Décision</label><select class="form-select" name="decision" id="decisionField" required><option value="valide">Validé</option><option value="en_suspens">En suspens</option><option value="annule">Annulé</option></select></div>
                                 <div id="approvalAmountGroup" class="mb-3"><label for="approvedAmountField" class="form-label fw-semibold">Montant autorisé (<?= e($demande['currency']) ?>)</label><input id="approvedAmountField" type="number" class="form-control" name="approved_amount" min="0.01" max="<?= e(number_format($approvedAmount, 2, '.', '')) ?>" step="0.01" value="<?= e(number_format($approvedAmount, 2, '.', '')) ?>" required><div id="partialApprovalLabel" class="form-text">Validation totale du montant disponible.</div><div class="tr-partial-notice mt-2">Une validation partielle réduit le montant payable. Le solde non autorisé ne sera pas payé par cette demande ; une nouvelle demande sera nécessaire pour le réexaminer.</div></div>
-                                <div id="reminderDateGroup" class="mb-3" hidden><label for="reminderDateField" class="form-label fw-semibold">Date de rappel <span class="text-danger">*</span></label><input id="reminderDateField" type="date" class="form-control" name="reminder_date" min="<?= date('Y-m-d') ?>" value="<?= date('Y-m-d', strtotime('+1 day')) ?>"><div class="form-text">La demande reste visible dans « En suspens » et un rappel sera adressé à ce niveau de décision.</div></div>
+                                <div id="reminderDateGroup" class="mb-3" hidden><label for="reminderDateField" class="form-label fw-semibold">Date de réponse prévue <span class="text-danger">*</span></label><input id="reminderDateField" type="date" class="form-control" name="reminder_date" min="<?= date('Y-m-d') ?>" value="<?= date('Y-m-d', strtotime('+1 day')) ?>"><div class="form-text">Date à laquelle une réponse est attendue. Elle est communiquée au demandeur et un rappel sera adressé à ce niveau de décision à cette date.</div></div>
                                 <div class="mb-3"><label class="form-label fw-semibold">Commentaire</label><textarea class="form-control" name="commentaire" id="commentaireField" rows="3" placeholder="Ajoutez une observation utile à la traçabilité"></textarea><div class="form-text" id="commentHelp">Facultatif pour une approbation.</div></div>
                                 <button type="submit" class="btn btn-primary w-100" id="decisionButton"><i class="bi bi-shield-check me-1"></i>Revoir et confirmer</button>
                             </form>
@@ -333,7 +349,7 @@ document.addEventListener('DOMContentLoaded', function () {
             var paused = decisionField.value === 'en_suspens';
             var partial = !cancelled && !paused && Number(approvedAmountField.value) < amountLimit;
             var tone = cancelled ? 'danger' : (paused ? 'warning' : 'success');
-            var decisionLabel = cancelled ? 'Annuler la demande' : (paused ? 'Mettre en suspens · rappel le ' + reminderDateField.value.split('-').reverse().join('/') : (partial ? 'Validation partielle · ' : 'Validation totale · ') + money(approvedAmountField.value));
+            var decisionLabel = cancelled ? 'Annuler la demande' : (paused ? 'Mettre en suspens · réponse prévue le ' + reminderDateField.value.split('-').reverse().join('/') : (partial ? 'Validation partielle · ' : 'Validation totale · ') + money(approvedAmountField.value));
             var level = document.getElementById('approvalLevel');
             document.getElementById('decisionLevelSummary').textContent = level.options[level.selectedIndex].text;
             document.getElementById('decisionSummary').textContent = decisionLabel;

@@ -43,8 +43,8 @@
 <body>
 <?php
 $averageUsd = count($demandesKpi) > 0 ? $totalUsd / count($demandesKpi) : 0;
-$highCount = count(array_filter($demandesKpi, static function ($ligne) {
-    return ($ligne['urgency'] ?? '') === 'haute';
+$validatedCount = count(array_filter($demandesKpi, static function ($ligne) {
+    return in_array($ligne['status'] ?? '', ['validee_direction', 'ordre_emis', 'payee'], true);
 }));
 $isRegister = ($metric ?? '') === 'registre';
 $actionLabels = [
@@ -71,16 +71,16 @@ $actionLabels = [
         <td><div class="label">Volume</div><div class="value"><?= count($demandesKpi) ?> demande(s)</div></td>
         <td class="primary"><div class="label">Engagement total</div><div class="value"><?= formatMontant($totalUsd, 'USD') ?></div></td>
         <td><div class="label">Montant moyen</div><div class="value"><?= formatMontant($averageUsd, 'USD') ?></div></td>
-        <td><div class="label">Urgences hautes</div><div class="value <?= $highCount > 0 ? 'high' : '' ?>"><?= $highCount ?></div></td>
+        <td><div class="label">Validées</div><div class="value"><?= $validatedCount ?></div></td>
     </tr></table>
 
     <div class="section-title">Détail des demandes</div>
     <table class="details">
-        <colgroup><col style="width:12%"><col style="width:8%"><col style="width:16%"><col style="width:24%"><col style="width:13%"><col style="width:12%"><col style="width:7%"><col style="width:8%"></colgroup>
-        <thead><tr><th>Numéro</th><th>Date</th><th>Bénéficiaire</th><th>Objet</th><th>Catégorie</th><th>Montant USD</th><th>Urgence</th><th><?= $isRegister ? 'Prochaine action' : 'Statut' ?></th></tr></thead>
+        <colgroup><col style="width:12%"><col style="width:8%"><col style="width:16%"><col style="width:24%"><col style="width:13%"><col style="width:12%"><col style="width:15%"></colgroup>
+        <thead><tr><th>Numéro</th><th>Date</th><th>Bénéficiaire</th><th>Objet</th><th>Catégorie</th><th>Montant USD</th><th><?= $isRegister ? 'Prochaine action' : 'Statut' ?></th></tr></thead>
         <tbody>
         <?php if (empty($demandesKpi)): ?>
-            <tr><td colspan="8" class="empty">Aucune demande ne correspond à cet indicateur.</td></tr>
+            <tr><td colspan="7" class="empty">Aucune demande ne correspond à cet indicateur.</td></tr>
         <?php else: foreach ($demandesKpi as $demande): ?>
             <tr>
                 <td><?= e($demande['request_number']) ?></td>
@@ -89,7 +89,6 @@ $actionLabels = [
                 <td><?= e($demande['objet']) ?></td>
                 <td><?= e($demande['category_nom'] ?? '—') ?></td>
                 <td class="num"><?= formatMontant((float)$demande['amount_usd'], 'USD') ?></td>
-                <td class="<?= ($demande['urgency'] ?? '') === 'haute' ? 'high' : '' ?>"><?= e(ucfirst($demande['urgency'])) ?></td>
                 <td>
                     <?php if ($isRegister): ?>
                         <?php
